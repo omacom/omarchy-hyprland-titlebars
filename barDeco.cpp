@@ -8,6 +8,7 @@
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/helpers/MiscFunctions.hpp>
+#include <hyprland/src/managers/KeybindManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -225,6 +226,12 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
 
   const bool BUTTONSRIGHT = ALIGNBUTTONS != "left";
 
+  // Hyprland measures its border resize band from the window's content, so for
+  // a titled window the band sits under the bar and the edge above the bar
+  // never resizes. A press in the band above the bar starts that resize here.
+  if (!m_bTouchEv && startTopEdgeResize(info, PWINDOW, COORDS))
+    return;
+
   if (!VECINRECT(COORDS, 0, 0, assignedBoxGlobal().w, HEIGHT - 1)) {
 
     if (m_bDraggingThis) {
@@ -260,6 +267,35 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
     m_lastMouseDown = Time::steadyNow();
     m_bDragPending = true;
   }
+}
+
+bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords) {
+  static const auto RESIZEONBORDER = CConfigValue<Config::INTEGER>("general:resize_on_border");
+  static const auto EXTENDGRAB = CConfigValue<Config::INTEGER>("general:extend_border_grab_area");
+
+  if (!*RESIZEONBORDER || !window || !window->m_isFloating || Fullscreen::controller()->isFullscreen(window))
+    return false;
+
+  // The band runs from the top of the bar out over the border and the grab
+  // area beyond it, across the bar's width and the grab area at its corners.
+  const double GRAB = window->getRealBorderSize() + *EXTENDGRAB;
+  const double WIDTH = assignedBoxGlobal().w;
+  if (coords.y >= 0 || coords.y < -GRAB || coords.x < -GRAB || coords.x >= WIDTH + GRAB)
+    return false;
+
+  if (Desktop::focusState()->window() != window)
+    Desktop::focusState()->fullWindowFocus(window, Desktop::FOCUS_REASON_CLICK);
+  Desktop::windowState()->raise(window);
+
+  CKeybindManager::changeMouseBindMode(MBIND_RESIZE);
+
+  // The press never reaches Hyprland, so neither does the release: the up
+  // handler ends the resize the way it ends a titlebar drag.
+  info.cancelled = true;
+  m_bCancelledDown = true;
+  m_bDraggingThis = true;
+  m_bDragPending = false;
+  return true;
 }
 
 void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {

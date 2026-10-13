@@ -151,8 +151,34 @@ end
     ctl('reload')
     time.sleep(.25)
     assert not ctl('configerrors').strip(), ctl('configerrors')
-    original = client()
     capture('floating')
+
+    # Omarchy draws the border around the titlebar too. Hyprland measures its
+    # resize band from the window's content, which puts the top of that band
+    # under the titlebar, so the titlebar has to start a resize from the band
+    # above it itself.
+    ctl('eval', 'hl.config({ general = { extend_border_grab_area = 8 }, plugin = { hyprbars = { bar_precedence_over_border = true } } })')
+    ctl('dispatch', 'hl.dsp.window.move({ x = 340, y = 260 })')
+    time.sleep(.3)
+    before = client()
+    x = before['at'][0] + before['size'][0] // 3
+    y = before['at'][1] - 30 - 2 - 4
+    commands = [f'move {x} {y}', 'wait 100', 'down', 'wait 120']
+    for i in range(1, 11):
+      commands += [f'move {x} {y - 6 * i}', 'wait 20']
+    commands += ['wait 100', 'up']
+    pointer(commands)
+    after = client()
+    assert after['size'][1] >= before['size'][1] + 40, (before, after)
+    assert after['at'][1] + after['size'][1] == before['at'][1] + before['size'][1], (before, after)
+    capture('top-edge-resized')
+    print('PASS: dragging just above the titlebar resizes the window from its top edge', flush=True)
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { bar_precedence_over_border = false } } })')
+    ctl('dispatch', f'hl.dsp.window.resize({{ x = {before["size"][0]}, y = {before["size"][1]} }})')
+    ctl('dispatch', 'hl.dsp.window.center()')
+    time.sleep(.3)
+
+    original = client()
 
     edge = drag_to(1, 360)
     assert edge['size'] == original['size'] and edge['fullscreen'] == 0, edge
