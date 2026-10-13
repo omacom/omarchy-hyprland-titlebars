@@ -77,3 +77,16 @@ python3 tools/verify.py build/titlebars.so
 The verifier needs a running Hyprland session with exactly one Hyprland instance, plus `foot`, `grim`, `wayland-scanner`, and a C compiler. It starts a disposable nested Hyprland with its own runtime directory and never loads the candidate library into the parent compositor. It checks repeated load/reload/unload, interleaved with the Windows XP fork when `/usr/lib/omarchy-windows-xp/hyprbars.so` is installed, and that a loaded plugin the config no longer configures reserves no titlebar space. It then exercises real pointer titlebar dragging to the screen edges without snapping, double-click maximize, and restoring a maximized window by dragging its titlebar. A two-window regression check deliberately delays button and double-click commands and changes focus before they run, to verify that actions keep the clicked window as their target. A final check confirms that `workspace_tag`-scoped titlebars release their space immediately when a window is tiled or untagged.
 
 Screenshots and logs go to `/tmp/omarchy-hyprland-titlebars-verification` by default; pass `--artifacts DIR` to change it.
+
+### Hidden-window unload regression
+
+The focused regression loads titlebars into a visible terminal, starts a child terminal that swallows it, and verifies the original window is actually hidden. It then unloads the plugin, sends real pointer motion and button events, and closes the child to reveal the original window again. This catches decorations and their input callbacks surviving library unload, as reported in [Omarchy #15260](https://github.com/omacom/omarchy/issues/15260).
+
+```bash
+python3 tools/verify.py build/titlebars.so --unload-regression --cycles 100 \
+  --compositor /path/to/corrected/Hyprland --artifacts /tmp/titlebars-corrected
+```
+
+To capture the first fault on an affected compositor, add `--gdb` and use a separate artifacts directory. An affected build exits unsuccessfully; inspect `compositor.log` for the SIGSEGV and mouse-move callback stack. The corrected build must finish every cycle successfully. The normal verifier remains available without `--unload-regression`.
+
+All control commands are restricted to the nested compositor's instance and runtime directory. Test crash reports use a separate cache directory, and core dumps are disabled for the nested compositor. Child processes are stopped when the verifier exits.
