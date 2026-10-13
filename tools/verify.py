@@ -4,8 +4,11 @@ The candidate library is only ever loaded into the disposable nested compositor,
 never into the parent session.
 """
 import argparse
+import errno
 import json
 import os
+import resource
+import shlex
 from pathlib import Path
 import subprocess
 import tempfile
@@ -14,8 +17,14 @@ import time
 source = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('library', type=Path, help='built titlebars.so to test')
+parser.add_argument('--compositor', default='Hyprland', help='compositor binary to test')
+parser.add_argument('--unload-regression', action='store_true', help='test unloading with a hidden swallowed window')
+parser.add_argument('--cycles', type=int, default=3, help='hidden-window unload cycles')
+parser.add_argument('--gdb', action='store_true', help='capture the first SIGSEGV before the crash reporter')
 parser.add_argument('--artifacts', type=Path, default=Path('/tmp/omarchy-hyprland-titlebars-verification'))
 args = parser.parse_args()
+if args.cycles < 1:
+  parser.error('--cycles must be positive')
 args.library = args.library.resolve()
 if not args.library.is_file():
   parser.error(f'{args.library} does not exist')
@@ -43,21 +52,32 @@ if hl.plugin and hl.plugin.hyprbars and not unconfigured then
   hl.plugin.hyprbars.add_button({ bg_color = "rgb(f7768e)", fg_color = "rgb(1a1b26)", size = 18, icon = "×", action = [[hyprctl dispatch 'hl.dsp.window.close({ window = "address:%WINDOW%" })']] })
 end
 '''.replace('UNCONFIGURED', str(unconfigured)))
+  if args.unload_regression:
+    with config.open('a') as config_file:
+      config_file.write('\nhl.config({ misc = { enable_swallow = true, swallow_regex = "omarchy-titlebars-isolated-test" } })\n')
   parent_instances = json.loads(subprocess.check_output(['hyprctl', 'instances', '-j'], text=True))
   if len(parent_instances) != 1:
     raise RuntimeError('Verification expects exactly one parent compositor')
   parent_signature = parent_instances[0]['instance']
   parent_display = str(Path(os.environ['XDG_RUNTIME_DIR']) / parent_instances[0]['wl_socket'])
   env = dict(os.environ, XDG_RUNTIME_DIR=str(scratch), AQ_BACKEND='wayland', WAYLAND_DISPLAY=parent_display, HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_SD_VARS='1')
+  env['XDG_CACHE_HOME'] = str(args.artifacts.resolve() / 'cache')
   env.pop('HYPRLAND_INSTANCE_SIGNATURE', None)
   log = (args.artifacts / 'compositor.log').open('w')
-  compositor = subprocess.Popen(['Hyprland', '--config', str(config)], env=env, stdout=log, stderr=log)
+  command = [args.compositor, '--config', str(config)]
+  if args.gdb:
+    command = ['gdb', '-q', '-batch', '-ex', 'set debuginfod enabled off',
+               '-ex', 'handle SIGSEGV stop print nopass', '-ex', 'run', '-ex', 'bt',
+               '-ex', 'info sharedlibrary', '-ex', 'info proc mappings', '--args', *command]
+  def child_limits():
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+  compositor = subprocess.Popen(command, env=env, stdout=log, stderr=log, preexec_fn=child_limits)
   terminal = None
   secondary = None
 
   def ctl(*argv):
-    # Never let a plugin command reach the parent compositor.
-    if argv[0] == 'plugin':
+    # Never let a control command reach the parent compositor.
+    if argv[0] != 'instances':
       signature = env.get('HYPRLAND_INSTANCE_SIGNATURE')
       if not signature or signature == parent_signature or env['XDG_RUNTIME_DIR'] != str(scratch):
         raise RuntimeError('Refusing to send a plugin command outside the nested compositor')
@@ -72,6 +92,35 @@ end
   def pointer(commands):
     subprocess.run([str(scratch / 'pointer'), '1280', '800'], input='\n'.join(commands) + '\n', text=True, env=env, check=True, timeout=10)
     time.sleep(.15)
+
+  def spawn_child():
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+      if terminal.poll() is not None or compositor.poll() is not None:
+        raise RuntimeError('Test process exited before spawning the swallowed child')
+      try:
+        fd = os.open(trigger, os.O_WRONLY | os.O_NONBLOCK)
+      except OSError as error:
+        if error.errno != errno.ENXIO:
+          raise
+        time.sleep(.05)
+        continue
+      try:
+        os.write(fd, b'spawn\n')
+      finally:
+        os.close(fd)
+      return
+    raise RuntimeError('Timed out waiting for the test terminal to read its FIFO')
+
+  def stop(process):
+    if process is None or process.poll() is not None:
+      return
+    process.terminate()
+    try:
+      process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+      process.kill()
+      process.wait(timeout=5)
 
   def drag_to(x, y):
     window = client()
@@ -104,13 +153,55 @@ end
     else:
       raise RuntimeError('Isolated compositor did not start')
     time.sleep(.2)
-    terminal = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-isolated-test', '--title=Titlebars — isolated verification', 'sleep', '90'], env=env, stdout=log, stderr=log)
+    terminal_command = ['sleep', 'infinity']
+    if args.unload_regression:
+      trigger = scratch / 'spawn-child'
+      os.mkfifo(trigger)
+      terminal_command = ['bash', '-c', f'while read -r line < {shlex.quote(str(trigger))}; do foot --app-id=omarchy-titlebars-hidden-test sleep infinity; done']
+    terminal = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-isolated-test', '--title=Titlebars — isolated verification', *terminal_command], env=env, stdout=log, stderr=log)
     for _ in range(60):
       if json.loads(ctl('clients', '-j')):
         break
       time.sleep(.1)
     else:
       raise RuntimeError('Test client did not map')
+
+    if args.unload_regression:
+      first_address = client()['address']
+      for cycle in range(args.cycles):
+        response = ctl('plugin', 'load', str(args.library))
+        assert response.strip() == 'ok', response
+        time.sleep(.3)
+        plugins = json.loads(ctl('plugin', 'list', '-j'))
+        assert len(plugins) == 1 and plugins[0]['name'] == 'hyprbars', plugins
+        assert not ctl('configerrors').strip(), ctl('configerrors')
+        ctl('dispatch', f'hl.dsp.focus({{ window = "address:{first_address}" }})')
+        pointer(['move 400 300'])
+        spawn_child()
+        for _ in range(60):
+          windows = json.loads(ctl('clients', '-j'))
+          if len(windows) == 2 and any(window['address'] == first_address and window['hidden'] for window in windows):
+            break
+          time.sleep(.1)
+        else:
+          raise RuntimeError(f'Test requires an actually hidden swallowed window: {windows}')
+        second_address = next(window['address'] for window in windows if window['address'] != first_address)
+        print(f'Unloading with hidden window: cycle {cycle + 1}', flush=True)
+        response = ctl('plugin', 'unload', str(args.library))
+        assert response.strip() == 'ok', response
+        assert not json.loads(ctl('plugin', 'list', '-j'))
+        pointer(['move 100 100', 'move 600 400', 'move 800 600', 'down', 'up'])
+        assert compositor.poll() is None, 'Compositor exited after post-unload input'
+        ctl('dispatch', f'hl.dsp.window.close({{ window = "address:{second_address}" }})')
+        for _ in range(60):
+          windows = json.loads(ctl('clients', '-j'))
+          if len(windows) == 1 and not windows[0]['hidden']:
+            break
+          time.sleep(.1)
+        else:
+          raise RuntimeError('Swallowed terminal did not return after closing child')
+      print(f'PASS: {args.cycles} hidden-window unload cycles with real pointer input', flush=True)
+      raise SystemExit(0)
 
     xp = Path('/usr/lib/omarchy-windows-xp/hyprbars.so')
     sequence = [args.library, args.library]
@@ -204,7 +295,7 @@ end
     ctl('dispatch', f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "unset", window = "address:{first_address}" }})')
     ctl('dispatch', f'hl.dsp.window.resize({{ x = 500, y = 350, window = "address:{first_address}" }})')
     ctl('dispatch', f'hl.dsp.window.move({{ x = 60, y = 320, window = "address:{first_address}" }})')
-    secondary = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-focus-race', '--title=Second window must stay unchanged', 'sleep', '90'], env=env, stdout=log, stderr=log)
+    secondary = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-focus-race', '--title=Second window must stay unchanged', 'sleep', 'infinity'], env=env, stdout=log, stderr=log)
     for _ in range(60):
       windows = json.loads(ctl('clients', '-j'))
       if len(windows) == 2:
@@ -246,16 +337,7 @@ end
     capture('workspace-untagged-no-titlebar')
     print('PASS: workspace-scoped titlebars release space immediately when tiled or untagged', flush=True)
   finally:
-    if secondary and secondary.poll() is None:
-      secondary.terminate()
-      secondary.wait(timeout=5)
-    if terminal and terminal.poll() is None:
-      terminal.terminate()
-      terminal.wait(timeout=5)
-    compositor.terminate()
-    try:
-      compositor.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-      compositor.kill()
-      compositor.wait()
+    stop(secondary)
+    stop(terminal)
+    stop(compositor)
     log.close()
