@@ -65,6 +65,13 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
   m_pTouchMoveCallback = Event::bus()->m_events.input.touch.motion.listen([&](ITouch::SMotionEvent e, Event::SCallbackInfo &info) { onTouchMove(info, e); });
   m_pMouseMoveCallback = Event::bus()->m_events.input.mouse.move.listen([&](Vector2D c, Event::SCallbackInfo &info) { onMouseMove(c); });
 
+  // A window that closes mid-drag never sees the release reach its bar, so
+  // the drag ends here instead.
+  m_pWindowCloseCallback = Event::bus()->m_events.window.close.listen([&](PHLWINDOW w) {
+    if (w == m_pWindow.lock())
+      endDragEvent();
+  });
+
   Animation::mgr()->createAnimation(configColor(g_pOmarchyFloatingGlobalState->config.barColor->value()), m_cRealBarColor,
                                     Config::animationTree()->getAnimationPropertyConfig("border"), pWindow, AVARDAMAGE_NONE);
   m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
@@ -194,6 +201,11 @@ void COmarchyFloatingHyprBar::onTouchMove(Event::SCallbackInfo &info, ITouch::SM
     g_pKeybindManager->m_dispatchers["pin"]("activewindow");
   }
   g_pKeybindManager->m_dispatchers["movewindowpixel"](std::format("exact {} {},activewindow", (int)(COORDS.x - (assignedBoxGlobal().w / 2)), (int)COORDS.y));
+  m_lastTouchCoords = COORDS;
+  if (!m_bDraggingThis) {
+    m_bDragEventSent = true;
+    emitDragEvent(g_pOmarchyFloatingGlobalState->dragStartEvent, COORDS);
+  }
   m_bDraggingThis = true;
 }
 
@@ -241,6 +253,7 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
       Log::logger->log(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)PWINDOW.get());
     }
 
+    endDragEvent();
     m_bDraggingThis = false;
     m_bDragPending = false;
     m_bTouchEv = false;
@@ -316,6 +329,7 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
     Log::logger->log(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
   }
 
+  endDragEvent();
   m_bDragPending = false;
   m_bTouchEv = false;
   m_touchId = 0;
@@ -341,8 +355,29 @@ void COmarchyFloatingHyprBar::handleMovement() {
   }
   g_pKeybindManager->changeMouseBindMode(MBIND_MOVE);
   m_bDraggingThis = true;
+  m_bDragEventSent = true;
+  emitDragEvent(g_pOmarchyFloatingGlobalState->dragStartEvent, cursor);
   Log::logger->log(Log::DEBUG, "[hyprbars] Dragging initiated on {:x}", (uintptr_t)m_pWindow.lock().get());
   return;
+}
+
+void COmarchyFloatingHyprBar::emitDragEvent(const SP<Event::CEventBus::CCustomEvent> &event, const Vector2D &coords) {
+  const auto window = m_pWindow.lock();
+  if (!event || !window)
+    return;
+
+  if (auto res = event->emit({PHLWINDOWREF{window}, coords.x, coords.y}); !res)
+    Log::logger->log(Log::ERR, "[hyprbars] {} failed: {}", event->m_name, res.error());
+}
+
+// Ends only a titlebar move; the top edge resize also sets m_bDraggingThis but
+// never announced a drag.
+void COmarchyFloatingHyprBar::endDragEvent() {
+  if (!m_bDragEventSent)
+    return;
+
+  m_bDragEventSent = false;
+  emitDragEvent(g_pOmarchyFloatingGlobalState->dragEndEvent, m_bTouchEv ? m_lastTouchCoords : g_pInputManager->getMouseCoordsInternal());
 }
 
 bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS,

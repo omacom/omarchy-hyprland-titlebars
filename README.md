@@ -47,6 +47,33 @@ hl.plugin.hyprbars.add_button({
 
 The replacement contains only `0x` and hexadecimal digits; no window title or other application-controlled text enters the command.
 
+## Rebuilding the buttons
+
+`hl.plugin.hyprbars.clear_buttons()` removes every button added so far and redraws the titlebars, so a config can rebuild the set in a different order or alignment without reloading:
+
+```lua
+hl.config({ plugin = { hyprbars = { bar_buttons_alignment = "left" } } })
+hl.plugin.hyprbars.clear_buttons()
+hl.plugin.hyprbars.add_button({ bg_color = "rgb(ff5f57)", fg_color = "rgb(1a1b26)", size = 18, icon = "×", action = [[hyprctl dispatch 'hl.dsp.window.close({ window = "address:%WINDOW%" })']] })
+hl.plugin.hyprbars.add_button({ bg_color = "rgb(febc2e)", fg_color = "rgb(1a1b26)", size = 18, icon = "−", action = "omarchy-hyprland-window-minimize %WINDOW%" })
+hl.plugin.hyprbars.add_button({ bg_color = "rgb(28c840)", fg_color = "rgb(1a1b26)", size = 18, icon = "□", action = [[hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle", window = "address:%WINDOW%" })']] })
+```
+
+A config reload still clears the buttons before the config runs, as before.
+
+## Drag events
+
+A press on a titlebar never reaches Hyprland, so its own move does not show up as a drag. The plugin announces its titlebar moves instead:
+
+```lua
+hl.on("hyprbars.drag_start", function(window, x, y) end)
+hl.on("hyprbars.drag_end", function(window, x, y) end)
+```
+
+`window` is the window being moved, and `x`, `y` are the pointer's global layout coordinates when the move starts and ends. The events fire only for a titlebar move, not for the resize from the edge above the bar, and the move itself is unchanged. A window that closes mid-drag still gets its `drag_end`, at the pointer's position when it closed.
+
+Hyprland replaces its Lua event handler on every config reload and only hooks a plugin event up when the plugin adds it, so the plugin hands its events to the new handler after each reload.
+
 ## Hyprland ABI
 
 A Hyprland plugin is only compatible with the exact Hyprland build whose headers it was compiled against, and Hyprland refuses to load a mismatched build. The package in omarchy-pkgs is rebuilt whenever `hyprland` changes, and the same automated bump moves its `hyprland=` dependency to the version it was rebuilt against, so the package always demands the Hyprland it loads into.
@@ -74,6 +101,6 @@ To release, tag the commit `vX.Y.Z` and push the tag. omarchy-pkgs builds the pa
 python3 tools/verify.py build/titlebars.so
 ```
 
-The verifier needs a running Hyprland session with exactly one Hyprland instance, plus `foot`, `grim`, `wayland-scanner`, and a C compiler. It starts a disposable nested Hyprland with its own runtime directory and never loads the candidate library into the parent compositor. It checks repeated load/reload/unload, interleaved with the Windows XP fork when `/usr/lib/omarchy-windows-xp/hyprbars.so` is installed, and that a loaded plugin the config no longer configures reserves no titlebar space. It then exercises real pointer titlebar dragging to the screen edges without snapping, double-click maximize, and restoring a maximized window by dragging its titlebar. A two-window regression check deliberately delays button and double-click commands and changes focus before they run, to verify that actions keep the clicked window as their target. A final check confirms that `workspace_tag`-scoped titlebars release their space immediately when a window is tiled or untagged.
+The verifier needs a running Hyprland session with exactly one Hyprland instance, plus `foot`, `grim`, `wayland-scanner`, and a C compiler. It starts a disposable nested Hyprland with its own runtime directory and never loads the candidate library into the parent compositor. It checks repeated load/reload/unload, interleaved with the Windows XP fork when `/usr/lib/omarchy-windows-xp/hyprbars.so` is installed, and that a loaded plugin the config no longer configures reserves no titlebar space. It then exercises real pointer titlebar dragging to the screen edges without snapping, double-click maximize, and restoring a maximized window by dragging its titlebar. A two-window regression check deliberately delays button and double-click commands and changes focus before they run, to verify that actions keep the clicked window as their target. It checks that a titlebar drag emits `hyprbars.drag_start` and `hyprbars.drag_end` with the window and pointer, also after the plugin is unloaded and loaded again and when the window closes mid-drag, and that `clear_buttons()` lets the buttons be rebuilt in a new order. A final check confirms that `workspace_tag`-scoped titlebars release their space immediately when a window is tiled or untagged.
 
 Screenshots and logs go to `/tmp/omarchy-hyprland-titlebars-verification` by default; pass `--artifacts DIR` to change it.

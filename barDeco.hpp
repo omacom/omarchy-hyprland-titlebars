@@ -67,6 +67,9 @@ private:
   bool m_bTitleColorChanged = false;
   bool m_bLastEnabledState = false;
   bool m_bWindowHasFocus = false;
+  // A titlebar move announced through hyprbars.drag_start, not yet through drag_end.
+  bool m_bDragEventSent = false;
+  Vector2D m_lastTouchCoords;
   std::optional<CHyprColor> m_bForcedBarColor;
   std::optional<CHyprColor> m_bForcedTitleColor;
 
@@ -93,6 +96,8 @@ private:
   void handleUpEvent(Event::SCallbackInfo &info);
   bool startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords);
   void handleMovement();
+  void emitDragEvent(const SP<Event::CEventBus::CCustomEvent> &event, const Vector2D &coords);
+  void endDragEvent();
   bool doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, bool BUTTONSRIGHT);
 
   CBox assignedBoxGlobal();
@@ -103,6 +108,7 @@ private:
 
   CHyprSignalListener m_pTouchMoveCallback;
   CHyprSignalListener m_pMouseMoveCallback;
+  CHyprSignalListener m_pWindowCloseCallback;
 
   std::string m_szLastTitle;
 

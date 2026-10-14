@@ -29,6 +29,9 @@ struct SOmarchyFloatingGlobalState {
   uint32_t barColorRuleIdx = 0;
   uint32_t titleColorRuleIdx = 0;
 
+  // hl.on("hyprbars.drag_start" / "hyprbars.drag_end", function(window, x, y) ... end)
+  SP<Event::CEventBus::CCustomEvent> dragStartEvent, dragEndEvent;
+
   struct {
     SP<Config::Values::CColorValue> barColor, textColor, inactiveBarColor, inactiveButtonColor, buttonBorderColor;
     SP<Config::Values::CIntValue> barHeight;

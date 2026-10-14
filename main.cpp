@@ -47,6 +47,13 @@ static void onPreConfigReload() {
 }
 
 static void onConfigReloaded() {
+  // Hyprland replaces its Lua event handler on every reload and hooks plugin
+  // events up only as they are added, so hand ours to the new handler.
+  for (const auto &event : {g_pOmarchyFloatingGlobalState->dragStartEvent, g_pOmarchyFloatingGlobalState->dragEndEvent}) {
+    if (event)
+      Event::bus()->m_events.pluginEventAdded.emit(event);
+  }
+
   for (auto &b : g_pOmarchyFloatingGlobalState->bars) {
     if (!b)
       continue;
@@ -190,6 +197,20 @@ int newOmarchyFloatingLuaButton(lua_State *L) {
   return 0;
 }
 
+int clearOmarchyFloatingLuaButtons(lua_State *L) {
+  g_pOmarchyFloatingGlobalState->buttons.clear();
+
+  for (auto &b : g_pOmarchyFloatingGlobalState->bars) {
+    if (!b)
+      continue;
+
+    b->m_bButtonsDirty = true;
+    b->damageEntire();
+  }
+
+  return 0;
+}
+
 static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   OMARCHY_FLOATING_PHANDLE = handle;
 
@@ -277,8 +298,17 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
 
   if (Config::mgr()->type() == Config::CONFIG_LEGACY)
     HyprlandAPI::addConfigKeyword(OMARCHY_FLOATING_PHANDLE, "plugin:hyprbars:hyprbars-button", onNewOmarchyFloatingButton, Hyprlang::SHandlerOptions{});
-  else
+  else {
     HyprlandAPI::addLuaFunction(OMARCHY_FLOATING_PHANDLE, "hyprbars", "add_button", ::newOmarchyFloatingLuaButton);
+    HyprlandAPI::addLuaFunction(OMARCHY_FLOATING_PHANDLE, "hyprbars", "clear_buttons", ::clearOmarchyFloatingLuaButtons);
+  }
+
+  using CCustomEvent = Event::CEventBus::CCustomEvent;
+  const std::vector<CCustomEvent::eType> DRAGARGS = {CCustomEvent::TYPE_WINDOW, CCustomEvent::TYPE_DOUBLE, CCustomEvent::TYPE_DOUBLE};
+  g_pOmarchyFloatingGlobalState->dragStartEvent = makeShared<CCustomEvent>("hyprbars.drag_start", DRAGARGS);
+  g_pOmarchyFloatingGlobalState->dragEndEvent = makeShared<CCustomEvent>("hyprbars.drag_end", DRAGARGS);
+  HyprlandAPI::addEvent(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->dragStartEvent);
+  HyprlandAPI::addEvent(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->dragEndEvent);
   static auto P4 = Event::bus()->m_events.config.preReload.listen([&] { onPreConfigReload(); });
   static auto P5 = Event::bus()->m_events.config.reloaded.listen([&] { onConfigReloaded(); });
 
@@ -300,6 +330,9 @@ static void exitOmarchyFloating() {
     m->m_scheduledRecalc = true;
 
   g_pHyprRenderer->m_renderPass.removeAllOfType("COmarchyFloatingBarPassElement");
+
+  HyprlandAPI::removeEvent(OMARCHY_FLOATING_PHANDLE, "hyprbars.drag_start");
+  HyprlandAPI::removeEvent(OMARCHY_FLOATING_PHANDLE, "hyprbars.drag_end");
 
   Desktop::Rule::windowEffects()->unregisterEffect(g_pOmarchyFloatingGlobalState->barColorRuleIdx);
   Desktop::Rule::windowEffects()->unregisterEffect(g_pOmarchyFloatingGlobalState->titleColorRuleIdx);

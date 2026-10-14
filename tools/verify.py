@@ -28,6 +28,8 @@ with tempfile.TemporaryDirectory(prefix='oht-') as scratch:
   subprocess.run(['cc', str(source / 'pointer.c'), str(scratch / 'pointer-protocol.c'), '-I', str(scratch), '-lwayland-client', '-o', str(scratch / 'pointer')], check=True)
   unconfigured = scratch / 'unconfigured'
   config = scratch / 'hyprland.lua'
+  drags = scratch / 'drags.log'
+  presses = scratch / 'presses.log'
   config.write_text('''
 hl.monitor({ output = "", mode = "1280x800@60", position = "0x0", scale = 1 })
 hl.config({ general = { gaps_in = 8, gaps_out = 8, border_size = 2, resize_on_border = true }, animations = { enabled = false }, input = { follow_mouse = 0 }, misc = { disable_hyprland_logo = true, disable_splash_rendering = true } })
@@ -40,9 +42,18 @@ if hl.plugin and hl.plugin.hyprbars and not unconfigured then
     button_rounding = 4, bar_text_align = "left", bar_text_font = "Sans", bar_text_size = 12, bar_part_of_window = true,
     on_double_click = [[hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle", window = "address:%WINDOW%" })']],
   } } })
+  local function record(name)
+    return function(window, x, y)
+      local log = io.open("DRAGS", "a")
+      log:write(string.format("%s %s %.0f %.0f", name, window.address, x, y), string.char(10))
+      log:close()
+    end
+  end
+  hl.on("hyprbars.drag_start", record("start"))
+  hl.on("hyprbars.drag_end", record("end"))
   hl.plugin.hyprbars.add_button({ bg_color = "rgb(f7768e)", fg_color = "rgb(1a1b26)", size = 18, icon = "×", action = [[hyprctl dispatch 'hl.dsp.window.close({ window = "address:%WINDOW%" })']] })
 end
-'''.replace('UNCONFIGURED', str(unconfigured)))
+'''.replace('UNCONFIGURED', str(unconfigured)).replace('DRAGS', str(drags)))
   parent_instances = json.loads(subprocess.check_output(['hyprctl', 'instances', '-j'], text=True))
   if len(parent_instances) != 1:
     raise RuntimeError('Verification expects exactly one parent compositor')
@@ -195,6 +206,70 @@ end
     restored = drag_to(650, 220)
     assert restored['fullscreen'] == 0 and restored['size'] == original['size'], restored
     print('PASS: dragging a maximized titlebar restores its size under the pointer', flush=True)
+
+    # Every titlebar move is announced to Lua with its window and the pointer
+    # position, once at the start and once at the end.
+    drags.unlink(missing_ok=True)
+    address = client()['address']
+    moved = drag_to(500, 300)
+    events = [line.split() for line in drags.read_text().splitlines()]
+    assert [e[:2] for e in events] == [['start', address], ['end', address]], events
+    assert (int(events[1][2]), int(events[1][3])) == (500, 300), events
+    print('PASS: titlebar drags emit hyprbars.drag_start and hyprbars.drag_end with the window and pointer', flush=True)
+
+    # Plugin events survive unloading and loading the plugin again, without
+    # being announced twice.
+    ctl('plugin', 'unload', str(args.library))
+    time.sleep(.15)
+    stale = subprocess.run(['hyprctl', 'eval', 'hl.on("hyprbars.drag_start", function() end)'], env=env, capture_output=True, text=True, timeout=5).stdout
+    assert 'hyprbars.drag_start' in stale, f'event outlived its plugin: {stale}'
+    ctl('plugin', 'load', str(args.library))
+    ctl('reload')
+    time.sleep(.25)
+    drags.unlink(missing_ok=True)
+    drag_to(560, 320)
+    events = [line.split()[0] for line in drags.read_text().splitlines()]
+    assert events == ['start', 'end'], events
+    print('PASS: drag events are unregistered on unload and registered once on reload', flush=True)
+
+    # A config can rebuild its buttons in a different order while running.
+    presses.unlink(missing_ok=True)
+    buttons = ''.join(
+      f'hl.plugin.hyprbars.add_button({{ bg_color = "{color}", fg_color = "rgb(1a1b26)", size = 18, icon = "{icon}", action = "echo {name} >> {presses}" }}) '
+      for name, color, icon in [('close', 'rgb(ff5f57)', '×'), ('minimize', 'rgb(febc2e)', '−'), ('zoom', 'rgb(28c840)', '□')])
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { bar_buttons_alignment = "left" } } }) hl.plugin.hyprbars.clear_buttons() ' + buttons)
+    time.sleep(.25)
+    capture('buttons-rebuilt')
+    window = client()
+    for i in range(3):
+      pointer([f'move {window["at"][0] + 7 + 23 * i + 9} {window["at"][1] - 15}', 'wait 450', 'down', 'up'])
+    time.sleep(.5)
+    assert presses.read_text().split() == ['close', 'minimize', 'zoom'], presses.read_text()
+    ctl('reload')
+    time.sleep(.25)
+    print('PASS: clear_buttons lets a config rebuild its buttons in a new order', flush=True)
+
+    # A window that closes mid-drag still ends its drag.
+    doomed = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-closed-mid-drag', 'sleep', '90'], env=env, stdout=log, stderr=log)
+    for _ in range(60):
+      windows = json.loads(ctl('clients', '-j'))
+      if len(windows) == 2:
+        break
+      time.sleep(.1)
+    doomed_window = next(w for w in windows if w['class'] == 'omarchy-titlebars-closed-mid-drag')
+    drags.unlink(missing_ok=True)
+    x, y = doomed_window['at'][0] + 200, doomed_window['at'][1] - 15
+    held = subprocess.Popen([str(scratch / 'pointer'), '1280', '800'], stdin=subprocess.PIPE, text=True, env=env)
+    held.stdin.write('\n'.join([f'move {x} {y}', 'wait 100', 'down', 'wait 120', f'move {x + 40} {y + 40}', 'wait 1500', 'up']) + '\n')
+    held.stdin.close()
+    time.sleep(.8)
+    ctl('dispatch', f'hl.dsp.window.close({{ window = "address:{doomed_window["address"]}" }})')
+    held.wait(timeout=10)
+    doomed.wait(timeout=5)
+    time.sleep(.3)
+    events = [line.split()[:2] for line in drags.read_text().splitlines()]
+    assert events == [['start', doomed_window['address']], ['end', doomed_window['address']]], events
+    print('PASS: a window closed mid-drag still emits hyprbars.drag_end', flush=True)
 
     # Make dispatch deliberately slow, then focus another window after clicking.
     # Both double-click and button actions must keep the decoration owner.
