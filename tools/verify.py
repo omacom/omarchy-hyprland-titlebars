@@ -184,7 +184,9 @@ end
     assert edge['size'] == original['size'] and edge['fullscreen'] == 0, edge
     top = drag_to(650, 1)
     assert top['size'] == original['size'] and top['fullscreen'] == 0, top
-    print('PASS: real pointer titlebar drags move the window to any edge without snapping', flush=True)
+    # Dropped with its titlebar above the top edge, the window comes back down.
+    assert top['at'][1] >= 32, top
+    print('PASS: real pointer titlebar drags move the window to any edge without snapping and keep its titlebar on screen', flush=True)
 
     window = client()
     x, y = window['at'][0] + 120, window['at'][1] - 15

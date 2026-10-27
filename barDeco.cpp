@@ -308,10 +308,13 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
   m_bCancelledDown = false;
 
   if (m_bDraggingThis) {
+    const bool MOVING = !m_bTouchEv && g_layoutManager->dragController()->mode() == MBIND_MOVE;
     g_pKeybindManager->changeMouseBindMode(MBIND_INVALID);
     m_bDraggingThis = false;
     if (m_bTouchEv)
       (void)Config::Actions::floatWindow(Config::Actions::eTogglableAction::TOGGLE_ACTION_DISABLE);
+    else if (MOVING)
+      keepTitlebarReachable();
 
     Log::logger->log(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
   }
@@ -343,6 +346,32 @@ void COmarchyFloatingHyprBar::handleMovement() {
   m_bDraggingThis = true;
   Log::logger->log(Log::DEBUG, "[hyprbars] Dragging initiated on {:x}", (uintptr_t)m_pWindow.lock().get());
   return;
+}
+
+void COmarchyFloatingHyprBar::keepTitlebarReachable() {
+  // A window dropped with its titlebar under a top bar or off the screen
+  // can't be dragged back, so keep the reserved top (border and titlebar)
+  // between the top and bottom of the work area.
+  const auto window = m_pWindow.lock();
+  if (!validMapped(window) || !window->m_isFloating)
+    return;
+
+  auto monitor = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run();
+  monitor = monitor ? monitor : window->m_monitor.lock();
+  if (!monitor)
+    return;
+
+  const auto work = monitor->logicalBoxMinusReserved();
+  const auto reserved = window->getFullWindowReservedArea();
+  auto box = window->layoutTarget()->position();
+  const double top = box.y - reserved.topLeft.y;
+  const double reachable = std::clamp(top, work.y, std::max(work.y, work.y + work.h - reserved.topLeft.y));
+  if (std::abs(reachable - top) < 0.5)
+    return;
+
+  box.y = reachable + reserved.topLeft.y;
+  g_layoutManager->setTargetGeom(box, window->layoutTarget());
+  Log::logger->log(Log::DEBUG, "[hyprbars] Moved {:x} to keep its titlebar reachable", (uintptr_t)window.get());
 }
 
 bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS,
