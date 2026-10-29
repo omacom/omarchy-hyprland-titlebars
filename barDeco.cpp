@@ -1,4 +1,5 @@
 #include "barDeco.hpp"
+#include "tabletInput.hpp"
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
@@ -36,7 +37,7 @@ using namespace Render::GL;
 
 static CHyprColor configColor(Config::INTEGER color) { return CHyprColor{static_cast<uint64_t>(color)}; }
 
-static std::string windowCommand(std::string command, const PHLWINDOW &window) {
+std::string COmarchyFloatingHyprBar::windowCommand(std::string command, const PHLWINDOW &window) {
   // Resolve the decoration owner synchronously. An asynchronously spawned
   // command must not choose its target from whatever happens to be focused.
   constexpr std::string_view token = "%WINDOW%";
@@ -70,7 +71,11 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
   m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
 }
 
-COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() { std::erase(g_pOmarchyFloatingGlobalState->bars, m_self); }
+COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() {
+  if (g_pOmarchyFloatingTabletInput)
+    g_pOmarchyFloatingTabletInput->cancelWindow(m_pWindow.lock());
+  std::erase(g_pOmarchyFloatingGlobalState->bars, m_self);
+}
 
 SDecorationPositioningInfo COmarchyFloatingHyprBar::getPositioningInfo() {
   const auto HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
@@ -95,15 +100,15 @@ void COmarchyFloatingHyprBar::onPositioningReply(const SDecorationPositioningRep
 
 std::string COmarchyFloatingHyprBar::getDisplayName() { return "Hyprbar"; }
 
-bool COmarchyFloatingHyprBar::inputIsValid() {
+bool COmarchyFloatingHyprBar::inputIsValid(std::optional<Vector2D> position) {
   if (m_hidden || !g_pOmarchyFloatingGlobalState->config.enabled->value())
     return false;
 
   if (g_pSeatManager->m_seatGrab && !g_pSeatManager->m_seatGrab->accepts(m_pWindow->wlSurface()->resource()))
     return false;
 
-  const auto MOUSE = g_pInputManager->getMouseCoordsInternal();
-  auto PMONITOR = Desktop::focusState()->monitor();
+  const auto MOUSE = position.value_or(g_pInputManager->getMouseCoordsInternal());
+  auto PMONITOR = position ? State::monitorState()->query().vec(MOUSE).run() : Desktop::focusState()->monitor();
 
   if (!PMONITOR)
     return false;
@@ -115,7 +120,7 @@ bool COmarchyFloatingHyprBar::inputIsValid() {
   auto focusState = Desktop::focusState();
   auto window = focusState->window();
 
-  if (WINDOWATCURSOR != m_pWindow && m_pWindow != window)
+  if (WINDOWATCURSOR != m_pWindow && (position || m_pWindow != window))
     return false;
 
   PHLLS foundSurface = nullptr;
@@ -139,28 +144,34 @@ void COmarchyFloatingHyprBar::onMouseButton(Event::SCallbackInfo &info, IPointer
     return;
 
   if (e.state != WL_POINTER_BUTTON_STATE_PRESSED) {
-    // A titlebar drag can finish over a panel or another surface.
-    if (m_bDraggingThis || m_bCancelledDown || m_bDragPending)
+    // Finish an earlier mouse press even while a pen owns another gesture.
+    // A mouse release must never complete a touch gesture.
+    if (!m_bTouchEv && (m_bDraggingThis || m_bCancelledDown || m_bDragPending))
       handleUpEvent(info);
     return;
   }
 
-  if (!inputIsValid())
+  if ((g_pOmarchyFloatingTabletInput && g_pOmarchyFloatingTabletInput->active()) || !inputIsValid())
     return;
 
   handleDownEvent(info, std::nullopt);
 }
 
 void COmarchyFloatingHyprBar::onTouchDown(Event::SCallbackInfo &info, ITouch::SDownEvent e) {
+  // Preserve the source of an owned mouse press until its release, including
+  // button presses and the resize band above the bar.
+  if (!m_bTouchEv && (m_bDraggingThis || m_bDragPending || m_bCancelledDown))
+    return;
+
   // Don't do anything if you're already grabbed a window with another finger
-  if (!inputIsValid() || e.touchID != 0)
+  if ((g_pOmarchyFloatingTabletInput && g_pOmarchyFloatingTabletInput->active()) || !inputIsValid() || e.touchID != 0)
     return;
 
   handleDownEvent(info, e);
 }
 
 void COmarchyFloatingHyprBar::onTouchUp(Event::SCallbackInfo &info, ITouch::SUpEvent e) {
-  if (!m_bDragPending || !m_bTouchEv || e.touchID != m_touchId)
+  if (!m_bDragPending || !m_bTouchEv || e.touchID != m_touchId || m_pWindow.lock() != Desktop::focusState()->window())
     return;
 
   handleUpEvent(info);
@@ -295,9 +306,6 @@ bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHL
 }
 
 void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
-  if (m_pWindow.lock() != Desktop::focusState()->window())
-    return;
-
   if (m_bCancelledDown)
     info.cancelled = true;
 
@@ -694,6 +702,8 @@ void COmarchyFloatingHyprBar::updateWindow(PHLWINDOW pWindow) {
 }
 
 void COmarchyFloatingHyprBar::onConfigReloaded() {
+  if (g_pOmarchyFloatingTabletInput)
+    g_pOmarchyFloatingTabletInput->cancelWindow(m_pWindow.lock());
   m_bButtonsDirty = true;
   m_bTitleColorChanged = true;
   m_pTextTex = nullptr;
@@ -761,6 +771,9 @@ void COmarchyFloatingHyprBar::updateRules() {
     m_bForcedTitleColor =
         CHyprColor(Config::ParserUtils::parseColor(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pOmarchyFloatingGlobalState->titleColorRuleIdx)->effect)
                        .value_or(0));
+
+  if (m_hidden && g_pOmarchyFloatingTabletInput)
+    g_pOmarchyFloatingTabletInput->cancelWindow(PWINDOW);
 
   if (prevHidden != m_hidden) {
     g_pDecorationPositioner->repositionDeco(this);

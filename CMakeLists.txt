@@ -8,7 +8,7 @@ project(omarchy-hyprland-titlebars
 
 set(CMAKE_CXX_STANDARD 23)
 
-set(SRC main.cpp barDeco.cpp BarPassElement.cpp appName.cpp)
+set(SRC main.cpp barDeco.cpp BarPassElement.cpp appName.cpp tabletInput.cpp)
 
 # Built as titlebars.so (no lib prefix). Omarchy loads it from the fixed path
 # /usr/lib/omarchy-hyprland-titlebars/titlebars.so. The Hyprland-facing plugin
@@ -32,3 +32,12 @@ pkg_check_modules(deps REQUIRED IMPORTED_TARGET
 target_link_libraries(titlebars PRIVATE rt PkgConfig::deps)
 
 install(TARGETS titlebars LIBRARY DESTINATION lib/omarchy-hyprland-titlebars)
+
+# Test-only device source, never installed or loaded by the production plugin.
+option(BUILD_TABLET_FIXTURE "Build the isolated tablet input fixture" OFF)
+if(BUILD_TABLET_FIXTURE)
+  add_library(oht-tablet-fixture MODULE tools/tablet-fixture.cpp)
+  set_target_properties(oht-tablet-fixture PROPERTIES PREFIX "")
+  target_compile_options(oht-tablet-fixture PRIVATE -fno-gnu-unique)
+  target_link_libraries(oht-tablet-fixture PRIVATE rt PkgConfig::deps)
+endif()

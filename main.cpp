@@ -1,3 +1,4 @@
+#include "tabletInput.hpp"
 #define WLR_USE_UNSTABLE
 
 #include <unistd.h>
@@ -229,6 +230,8 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   static auto P4 = Event::bus()->m_events.config.preReload.listen([&] { onPreConfigReload(); });
   static auto P5 = Event::bus()->m_events.config.reloaded.listen([&] { onConfigReloaded(); });
 
+  g_pOmarchyFloatingTabletInput = makeUnique<COmarchyFloatingTabletInput>();
+
   // add deco to existing windows
   for (auto &w : Desktop::windowState()->windows()) {
     if (w->isHidden() || !validMapped(w))
@@ -243,6 +246,7 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
 }
 
 static void exitOmarchyFloating() {
+  g_pOmarchyFloatingTabletInput.reset();
   for (auto &m : State::monitorState()->monitors())
     m->m_scheduledRecalc = true;
 
