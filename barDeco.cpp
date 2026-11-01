@@ -625,7 +625,7 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
   }
 
-  g_pHyprOpenGL->renderRect(ctx, titleBarBox, color, {.round = static_cast<int>(scaledRounding), .roundingPower = PWINDOW->presentation().roundingPower()});
+  g_pHyprOpenGL->renderRect(ctx, titleBarBox, color, {.round = static_cast<int>(scaledRounding), .roundingPower = PWINDOW->presentation().roundingPower(), .blur = SHOULDBLUR, .blurA = a});
 
   // render title
   // The app's name is steadier than a window title, which for a web app is often
