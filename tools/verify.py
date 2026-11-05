@@ -6,6 +6,7 @@ never into the parent session.
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -226,6 +227,41 @@ end
     remaining = json.loads(ctl('clients', '-j'))
     assert len(remaining) == 1 and remaining[0]['address'] == second_address, remaining
     print('PASS: delayed double-click and close target the clicked window after focus changes', flush=True)
+
+    # A bar whose window loses focus before the release, as one minimized from
+    # its own button does, must not keep the release armed: the next click in
+    # the window would lose its release and the app would see the button held.
+    # The client logs its pointer events, so the release it gets is visible.
+    pressed = args.artifacts / 'release-client.log'
+    released = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-release', '--title=Release must arrive', 'sleep', '90'], env=dict(env, WAYLAND_DEBUG='client'), stdout=log, stderr=pressed.open('w'))
+    for _ in range(60):
+      windows = json.loads(ctl('clients', '-j'))
+      if len(windows) == 2:
+        break
+      time.sleep(.1)
+    assert len(windows) == 2, windows
+    third_address = next(window['address'] for window in windows if window['address'] != second_address)
+    ctl('dispatch', f'hl.dsp.window.resize({{ x = 500, y = 350, window = "address:{third_address}" }})')
+    ctl('dispatch', f'hl.dsp.window.move({{ x = 60, y = 320, window = "address:{third_address}" }})')
+    ctl('dispatch', f'hl.dsp.focus({{ window = "address:{third_address}" }})')
+    time.sleep(.3)
+    held = subprocess.Popen([str(scratch / 'pointer'), '1280', '800'], stdin=subprocess.PIPE, text=True, env=env)
+    held.stdin.write('move 180 305\nwait 100\ndown\nwait 500\nup\nwait 100\n')
+    held.stdin.close()
+    time.sleep(.35)
+    ctl('dispatch', f'hl.dsp.focus({{ window = "address:{second_address}" }})')
+    held.wait(timeout=10)
+    pointer(['move 300 500', 'wait 100', 'down', 'wait 80', 'up', 'wait 400'])
+    times = [int(t) for t in re.findall(r'wl_pointer#\d+\.button\(\d+, (\d+), 272, \d\)', pressed.read_text(errors='replace'))]
+    assert len(times) >= 2 and times[-1] - times[-2] < 300, times
+    print('PASS: a titlebar press released after focus moves away leaves the next click intact', flush=True)
+
+    released.terminate()
+    released.wait(timeout=5)
+    for _ in range(60):
+      if len(json.loads(ctl('clients', '-j'))) == 1:
+        break
+      time.sleep(.1)
 
     # A workspace-scoped bar must release its reserved space as soon as a
     # window joins tiling, without waiting for a compositor config reload.

@@ -295,9 +295,10 @@ bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHL
 }
 
 void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
-  if (m_pWindow.lock() != Desktop::focusState()->window())
-    return;
-
+  // Only the bar that took the press gets here, and its window can have lost
+  // focus by the release, as one minimized from its own button has. The
+  // release is still this bar's: left armed, it would swallow the release of
+  // a later click in the window, and the app would see the button held down.
   if (m_bCancelledDown)
     info.cancelled = true;
 
