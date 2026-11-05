@@ -25,10 +25,20 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | `enabled` | false | Upstream defaults to true. Off here, so a plugin left loaded after the config stops configuring it draws nothing. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
 | `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
+| `bar_icon` | true | Draw the app's icon before the title. |
+| `bar_title_source` | `title` | `title` shows the window's own title, which follows what the app is doing; `app` shows the app's name instead. Each falls back to the other when empty. |
+| `respect_client_decorations` | true | Draw no titlebar on windows that draw their own (client-side decorations). |
+| `client_decorations_tag` | `chromium-based-browser` | Windows with this tag that ask for client-side decorations are trusted to draw their own titlebar. Empty trusts none. |
 
 ## Titles
 
-A titlebar shows the name of the app the window belongs to, when a desktop entry claims the window's class through `StartupWMClass` or its file name, and the window's own title otherwise. A web app titles its window with its page or just its domain, so this is what keeps `web.whatsapp.com` reading WhatsApp. Entries are read from `$XDG_DATA_HOME/applications` and then `$XDG_DATA_DIRS`, so a user's own entry wins, and an entry added while Hyprland runs is picked up within a couple of seconds.
+A titlebar shows the window's own title, so it follows what the app is doing: the page a browser has open, the directory a terminal is in. Apps retitle their windows as they go, and the bar is redrawn when they do, even when the window is not focused. With `bar_title_source = "app"` it shows the name of the app the window belongs to instead, which keeps a web app whose title is just its domain reading as the app.
+
+The app's name and icon come from the desktop entry that claims the window's class through `StartupWMClass` or its file name. Entries are read from `$XDG_DATA_HOME/applications` and then `$XDG_DATA_DIRS`, so a user's own entry wins, and an entry added while Hyprland runs is picked up within a couple of seconds. The icon is looked up in the GTK icon theme (`gtk-icon-theme-name`), the themes it inherits, and `hicolor`, preferring scalable icons and then the largest raster.
+
+## Client-side decorations
+
+Apps that draw their own titlebar get no second one. GTK and libadwaita apps never ask `xdg-decoration` for server-side decorations and always draw their own, so they are recognized on their own. Asking for client-side mode is not enough: Chromium does it when it draws tabs in its titlebar, but so does Alacritty with `decorations = "None"`, which draws nothing. Those windows are only left without a titlebar when they carry `client_decorations_tag`, which defaults to the `chromium-based-browser` tag Omarchy gives Chromium-based browsers. A client that asks for server-side mode always gets a titlebar, and one that switches mode while open, as Chromium does when "Use system title bar and borders" is toggled, gains or loses it on the next frame. Set `respect_client_decorations = false` to draw titlebars on every floating window.
 
 ## Button hover
 

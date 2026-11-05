@@ -65,6 +65,15 @@ static void onUpdateWindowRules(PHLWINDOW window) {
   window->updateWindowData();
 }
 
+// Apps retitle their windows as they go, and the bar sits outside the surface
+// the app damages, so it is redrawn here.
+static void onWindowTitle(PHLWINDOW window) {
+  for (auto &bar : g_pOmarchyFloatingGlobalState->bars) {
+    if (bar && bar->getOwner() == window)
+      bar->damageEntire();
+  }
+}
+
 int newOmarchyFloatingLuaButton(lua_State *L) {
   if (!lua_istable(L, 1))
     return Config::Lua::Bindings::Internal::configError(L, "add_button: expected a table { bg_color, fg_color, size, icon, action }");
@@ -160,6 +169,8 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
 
   static auto P = Event::bus()->m_events.window.open.listen([&](PHLWINDOW w) { onNewWindow(w); });
   static auto P3 = Event::bus()->m_events.window.updateRules.listen([&](PHLWINDOW w) { onUpdateWindowRules(w); });
+  static auto P6 = Event::bus()->m_events.window.title.listen([&](PHLWINDOW w) { onWindowTitle(w); });
+  static auto P7 = Event::bus()->m_events.window.class_.listen([&](PHLWINDOW w) { onWindowTitle(w); });
 
   g_pOmarchyFloatingGlobalState->config.barColor = makeShared<Config::Values::CColorValue>("plugin:hyprbars:bar_color", "Change the bar color", 0x88333333);
   g_pOmarchyFloatingGlobalState->config.textColor = makeShared<Config::Values::CColorValue>("plugin:hyprbars:col.text", "Change the text color", 0xffffffff);
@@ -198,6 +209,14 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CBoolValue>("plugin:hyprbars:icon_on_hover", "Whether to use an icon on hover of the buttons", false);
   g_pOmarchyFloatingGlobalState->config.onDoubleClick =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:on_double_click", "Action to execute on double click of the bar", "");
+  g_pOmarchyFloatingGlobalState->config.barIcon =
+      makeShared<Config::Values::CBoolValue>("plugin:hyprbars:bar_icon", "Show the app's icon before the title", true);
+  g_pOmarchyFloatingGlobalState->config.barTitleSource =
+      makeShared<Config::Values::CStringValue>("plugin:hyprbars:bar_title_source", "Title the bar with the window's own title (\"title\") or its app's name (\"app\")", "title");
+  g_pOmarchyFloatingGlobalState->config.respectClientDecorations = makeShared<Config::Values::CBoolValue>(
+      "plugin:hyprbars:respect_client_decorations", "Draw no bar on windows that draw their own titlebar (client-side decorations)", true);
+  g_pOmarchyFloatingGlobalState->config.clientDecorationsTag = makeShared<Config::Values::CStringValue>(
+      "plugin:hyprbars:client_decorations_tag", "Windows with this tag that ask for client-side decorations draw their own titlebar", "chromium-based-browser");
   g_pOmarchyFloatingGlobalState->config.workspaceTag =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:workspace_tag", "Restrict bars to windows with this tag", "");
 
@@ -222,6 +241,10 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.enabled);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.workspaceTag);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barIcon);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barTitleSource);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.respectClientDecorations);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.clientDecorationsTag);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.iconOnHover);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.onDoubleClick);
 

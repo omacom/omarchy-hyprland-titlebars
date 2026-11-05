@@ -38,8 +38,8 @@ struct SOmarchyFloatingGlobalState {
     SP<Config::Values::CIntValue> barButtonPadding;
     SP<Config::Values::CIntValue> buttonRounding;
     SP<Config::Values::CIntValue> buttonBorderSize;
-    SP<Config::Values::CBoolValue> barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover;
-    SP<Config::Values::CStringValue> barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, workspaceTag;
+    SP<Config::Values::CBoolValue> barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover, barIcon, respectClientDecorations;
+    SP<Config::Values::CStringValue> barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, workspaceTag, barTitleSource, clientDecorationsTag;
   } config;
 };
 

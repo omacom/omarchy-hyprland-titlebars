@@ -29,6 +29,13 @@
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include "appName.hpp"
 
+#include <hyprland/src/protocols/XDGShell.hpp>
+// The decoration mode each toplevel asked for is only kept in the protocol's private map.
+#define private public
+#include <hyprland/src/protocols/XDGDecoration.hpp>
+#undef private
+#include <hyprgraphics/image/Image.hpp>
+
 #include <algorithm>
 #include <climits>
 
@@ -47,6 +54,39 @@ static std::string windowCommand(std::string command, const PHLWINDOW &window) {
     offset += address.size();
   }
   return command;
+}
+
+// Whether a window draws its own titlebar. GTK and libadwaita apps never bind
+// xdg-decoration and always draw one. A client asking xdg-decoration for
+// client-side mode can't be told apart from one that just wants no decorations
+// at all (Alacritty with decorations = "None" asks the same), so those are only
+// trusted to draw their own when they carry client_decorations_tag, which
+// Omarchy gives Chromium-based browsers. Any client asking for server-side
+// mode, such as Chromium with "Use system title bar and borders", gets a bar.
+static bool clientDrawsDecorations(const PHLWINDOW &window) {
+  if (!window || window->backend().isX11())
+    return false;
+
+  const auto surface = window->backend().surface();
+  if (!surface || !PROTO::xdgDecoration)
+    return false;
+
+  for (const auto &[resource, decoration] : PROTO::xdgDecoration->m_decorations) {
+    if (!decoration)
+      continue;
+    const auto toplevel = CXDGToplevelResource::fromResource(resource);
+    const auto owner = toplevel ? toplevel->m_owner.lock() : nullptr;
+    if (!owner || owner->m_surface.lock() != surface)
+      continue;
+
+    if (decoration->mostRecentlyRequested == ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE)
+      return false;
+
+    const auto tag = g_pOmarchyFloatingGlobalState->config.clientDecorationsTag->value();
+    return !tag.empty() && window->m_ruleApplicator->m_tagKeeper.isTagged(tag);
+  }
+
+  return true;
 }
 
 COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
@@ -361,7 +401,7 @@ bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::
   return false;
 }
 
-void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const float scale) {
+void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const float scale, const int reservedWidth) {
   const auto COLORVAL = g_pOmarchyFloatingGlobalState->config.textColor->value();
   const auto SIZE = g_pOmarchyFloatingGlobalState->config.barTextSize->value();
   const auto WEIGHT = g_pOmarchyFloatingGlobalState->config.barTextWeight->value();
@@ -378,7 +418,7 @@ void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const f
   const int scaledSize = std::round(SIZE * scale);
   const auto scaledButtonsSize = buttonSizes * scale;
   const auto scaledBarPadding = BARPADDING * scale;
-  const int paddingTotal = scaledBarPadding * 2 + scaledButtonsSize + (ALIGN != "left" ? scaledButtonsSize : 0);
+  const int paddingTotal = scaledBarPadding * 2 + scaledButtonsSize + (ALIGN != "left" ? scaledButtonsSize : 0) + reservedWidth;
   const int maxWidth = std::clamp(static_cast<int>(bufferSize.x - paddingTotal), 0, INT_MAX);
 
   if (m_szLastTitle.empty() || maxWidth < 1) {
@@ -526,6 +566,12 @@ void COmarchyFloatingHyprBar::draw(Render::CRenderContext &ctx, PHLMONITOR pMoni
     g_pDecorationPositioner->repositionDeco(this);
   }
 
+  // A client can switch between its own titlebar and ours at runtime, as
+  // Chromium does when "Use system title bar and borders" is toggled.
+  if (validMapped(m_pWindow) && clientDrawsDecorations(m_pWindow.lock()) != m_bClientDecorated) {
+    updateRules();
+  }
+
   if (m_hidden || !validMapped(m_pWindow) || !ENABLED)
     return;
 
@@ -627,15 +673,21 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
 
   g_pHyprOpenGL->renderRect(ctx, titleBarBox, color, {.round = static_cast<int>(scaledRounding), .roundingPower = PWINDOW->presentation().roundingPower()});
 
+  // The app icon sits before the title, sized to the text and kept inside the bar.
+  const auto TEXTSIZE = g_pOmarchyFloatingGlobalState->config.barTextSize->value();
+  const int iconPx = g_pOmarchyFloatingGlobalState->config.barIcon->value()
+                         ? std::clamp(static_cast<int>(std::round(TEXTSIZE * 1.5 * pMonitor->m_scale)), 0, static_cast<int>(BARBUF.y - 4 * pMonitor->m_scale))
+                         : 0;
+  updateIcon(PWINDOW, iconPx);
+  const bool HASICON = iconPx > 0 && m_pIconTex && m_pIconTex->m_texID != 0;
+  const int iconGap = std::round(6 * pMonitor->m_scale);
+  const int iconWidth = HASICON ? iconPx + iconGap : 0;
+
   // render title
-  // The app's name is steadier than a window title, which for a web app is often
-  // just its domain or the page it is on. Windows no launcher claims keep theirs.
-  std::string title = omarchyAppName(PWINDOW->metadata().appID());
-  if (title.empty())
-    title = PWINDOW->metadata().title();
+  const std::string title = currentTitle(PWINDOW);
   if (ENABLETITLE && (m_szLastTitle != title || m_bWindowSizeChanged || !m_pTextTex || m_pTextTex->m_texID == 0 || m_bTitleColorChanged)) {
     m_szLastTitle = title;
-    renderBarTitle(BARBUF, pMonitor->m_scale);
+    renderBarTitle(BARBUF, pMonitor->m_scale, iconWidth);
   }
 
   if (ROUNDING) {
@@ -648,7 +700,7 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
   }
 
   CBox textBox = {titleBarBox.x, titleBarBox.y, (int)BARBUF.x, (int)BARBUF.y};
-  if (ENABLETITLE && m_pTextTex) {
+  if (HASICON || (ENABLETITLE && m_pTextTex)) {
     const auto BARPADDING = g_pOmarchyFloatingGlobalState->config.barPadding->value();
     const auto BARBUTTONPADDING = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
     const auto ALIGN = g_pOmarchyFloatingGlobalState->config.barTextAlign->value();
@@ -661,12 +713,26 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     const auto scaledBorderSize = PWINDOW->presentation().borderSize() * pMonitor->m_scale;
     const auto scaledButtonsSize = buttonSizes * pMonitor->m_scale;
     const auto scaledBarPadding = BARPADDING * pMonitor->m_scale;
+    const bool hasText = ENABLETITLE && m_pTextTex;
+    const double textWidth = hasText ? m_pTextTex->m_size.x : 0;
+    const double contentWidth = iconWidth + textWidth - (HASICON && !hasText ? iconGap : 0);
     const auto xOffset = ALIGN == "left" ? std::round(scaledBarPadding + (BUTTONSRIGHT ? 0 : scaledButtonsSize))
-                                         : std::round(((BARBUF.x - scaledBorderSize) / 2.0 - m_pTextTex->m_size.x / 2.0));
-    const auto yOffset = std::round((BARBUF.y - m_pTextTex->m_size.y) / 2.0);
-    CBox titleBox = {textBox.x + xOffset, textBox.y + yOffset, m_pTextTex->m_size.x, m_pTextTex->m_size.y};
+                                         : std::round(((BARBUF.x - scaledBorderSize) / 2.0 - contentWidth / 2.0));
 
-    g_pHyprOpenGL->renderTexture(ctx, m_pTextTex, titleBox, {.a = a});
+    if (HASICON) {
+      // Fit the icon in its square without stretching it: not every icon is square.
+      const auto texSize = m_pIconTex->m_size;
+      const double fit = texSize.x > 0 && texSize.y > 0 ? std::min(iconPx / texSize.x, iconPx / texSize.y) : 1.0;
+      const double iconW = std::round(texSize.x * fit), iconH = std::round(texSize.y * fit);
+      CBox iconBox = {textBox.x + xOffset + std::round((iconPx - iconW) / 2.0), textBox.y + std::round((BARBUF.y - iconH) / 2.0), iconW, iconH};
+      g_pHyprOpenGL->renderTexture(ctx, m_pIconTex, iconBox, {.a = a});
+    }
+
+    if (hasText) {
+      const auto yOffset = std::round((BARBUF.y - m_pTextTex->m_size.y) / 2.0);
+      CBox titleBox = {textBox.x + xOffset + iconWidth, textBox.y + yOffset, m_pTextTex->m_size.x, m_pTextTex->m_size.y};
+      g_pHyprOpenGL->renderTexture(ctx, m_pTextTex, titleBox, {.a = a});
+    }
   }
 
   renderBarButtons(ctx, &textBox, pMonitor->m_scale, a);
@@ -686,6 +752,44 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
   }
 }
 
+// The window's own title follows what the app is doing, such as the page or file
+// it has open. "app" titles the bar with the app's name instead, which is
+// steadier for web apps whose title is just their domain.
+std::string COmarchyFloatingHyprBar::currentTitle(PHLWINDOW window) {
+  const bool byApp = g_pOmarchyFloatingGlobalState->config.barTitleSource->value() == "app";
+  std::string title = byApp ? omarchyAppName(window->metadata().appID()) : window->metadata().title();
+  if (title.empty())
+    title = byApp ? window->metadata().title() : omarchyAppName(window->metadata().appID());
+  return title;
+}
+
+void COmarchyFloatingHyprBar::updateIcon(PHLWINDOW window, int pixels) {
+  if (pixels <= 0) {
+    m_pIconTex = nullptr;
+    m_szIconClass.clear();
+    return;
+  }
+
+  if (m_szIconClass == window->metadata().appID() && m_iIconPx == pixels)
+    return;
+
+  m_szIconClass = window->metadata().appID();
+  m_iIconPx = pixels;
+  m_pIconTex = nullptr;
+
+  const auto path = omarchyAppIcon(window->metadata().appID());
+  if (path.empty())
+    return;
+
+  Hyprgraphics::CImage image(path, Vector2D{(double)pixels, (double)pixels});
+  if (!image.success() || !image.cairoSurface() || !image.cairoSurface()->cairo()) {
+    LOG(Log::DEBUG, "[hyprbars] Could not load icon {}: {}", path, image.getError());
+    return;
+  }
+
+  m_pIconTex = g_pHyprRenderer->createTexture(image.cairoSurface()->cairo());
+}
+
 eDecorationType COmarchyFloatingHyprBar::getDecorationType() { return DECORATION_CUSTOM; }
 
 void COmarchyFloatingHyprBar::updateWindow(PHLWINDOW pWindow) {
@@ -697,6 +801,8 @@ void COmarchyFloatingHyprBar::onConfigReloaded() {
   m_bButtonsDirty = true;
   m_bTitleColorChanged = true;
   m_pTextTex = nullptr;
+  m_pIconTex = nullptr;
+  m_szIconClass.clear();
 
   g_pDecorationPositioner->repositionDeco(this);
 
@@ -751,6 +857,9 @@ void COmarchyFloatingHyprBar::updateRules() {
 
   if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pOmarchyFloatingGlobalState->nobarRuleIdx))
     m_hidden = truthy(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pOmarchyFloatingGlobalState->nobarRuleIdx)->effect);
+  m_bClientDecorated = clientDrawsDecorations(PWINDOW);
+  if (m_bClientDecorated && g_pOmarchyFloatingGlobalState->config.respectClientDecorations->value())
+    m_hidden = true;
   const auto workspaceTag = g_pOmarchyFloatingGlobalState->config.workspaceTag->value();
   if (!workspaceTag.empty())
     m_hidden = m_hidden || !PWINDOW->isFloating() || !PWINDOW->m_ruleApplicator->m_tagKeeper.isTagged(workspaceTag);

@@ -62,11 +62,18 @@ private:
 
   SP<Render::ITexture> m_pTextTex;
 
+  // The app icon drawn before the title, reloaded when the class or its size changes.
+  SP<Render::ITexture> m_pIconTex;
+  std::string m_szIconClass;
+  int m_iIconPx = 0;
+
   bool m_bWindowSizeChanged = false;
   bool m_hidden = false;
   bool m_bTitleColorChanged = false;
   bool m_bLastEnabledState = false;
   bool m_bWindowHasFocus = false;
+  // The client draws its own titlebar (client-side decorations), so this one stays out of the way.
+  bool m_bClientDecorated = false;
   std::optional<CHyprColor> m_bForcedBarColor;
   std::optional<CHyprColor> m_bForcedTitleColor;
 
@@ -77,7 +84,9 @@ private:
   Vector2D cursorRelativeToBar();
 
   void renderPass(Render::CRenderContext &ctx, PHLMONITOR, float const &a);
-  void renderBarTitle(const Vector2D &bufferSize, const float scale);
+  void renderBarTitle(const Vector2D &bufferSize, const float scale, const int reservedWidth);
+  void updateIcon(PHLWINDOW window, int pixels);
+  std::string currentTitle(PHLWINDOW window);
   void renderBarButtons(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
   void renderBarButtonsText(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
   void damageOnButtonHover();
