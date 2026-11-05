@@ -3,6 +3,8 @@
 #include <hyprland/src/render/Renderer.hpp>
 #include "barDeco.hpp"
 
+#include <algorithm>
+
 using namespace Render::GL;
 
 COmarchyFloatingBarPassElement::COmarchyFloatingBarPassElement(const COmarchyFloatingBarPassElement::SBarData &data_) : data(data_) { ; }
@@ -16,8 +18,12 @@ bool COmarchyFloatingBarPassElement::needsLiveBlur(Render::CRenderContext &) {
   static auto PENABLEBLURGLOBAL = CConfigValue<Config::BOOL>("decoration:blur:enabled");
 
   CHyprColor color = data.deco->m_bForcedBarColor.value_or(CHyprColor{static_cast<uint64_t>(g_pOmarchyFloatingGlobalState->config.barColor->value())});
+  // Must agree with renderPass on whether the bar blurs.
+  const bool GLASSY = data.deco->glassy();
+  if (GLASSY)
+    color.a *= std::clamp(g_pOmarchyFloatingGlobalState->config.glassOpacity->value(), 0.F, 1.F);
   color.a *= data.a;
-  const bool SHOULDBLUR = g_pOmarchyFloatingGlobalState->config.barBlur->value() && *PENABLEBLURGLOBAL && color.a < 1.F;
+  const bool SHOULDBLUR = (g_pOmarchyFloatingGlobalState->config.barBlur->value() || GLASSY) && *PENABLEBLURGLOBAL && color.a < 1.F;
 
   return SHOULDBLUR;
 }

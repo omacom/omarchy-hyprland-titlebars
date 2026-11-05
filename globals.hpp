@@ -4,6 +4,7 @@
 #include <hyprland/src/render/Texture.hpp>
 #include <hyprland/src/config/values/types/BoolValue.hpp>
 #include <hyprland/src/config/values/types/IntValue.hpp>
+#include <hyprland/src/config/values/types/FloatValue.hpp>
 #include <hyprland/src/config/values/types/StringValue.hpp>
 #include <hyprland/src/config/values/types/ColorValue.hpp>
 #include <hyprland/src/config/values/types/FontWeightValue.hpp>
@@ -32,6 +33,7 @@ struct SOmarchyFloatingGlobalState {
   struct {
     SP<Config::Values::CColorValue> barColor, textColor, inactiveBarColor, inactiveButtonColor, buttonBorderColor;
     SP<Config::Values::CIntValue> barHeight;
+    SP<Config::Values::CFloatValue> glassOpacity;
     SP<Config::Values::CIntValue> barTextSize;
     SP<Config::Values::CFontWeightValue> barTextWeight;
     SP<Config::Values::CIntValue> barPadding;
@@ -39,7 +41,7 @@ struct SOmarchyFloatingGlobalState {
     SP<Config::Values::CIntValue> buttonRounding;
     SP<Config::Values::CIntValue> buttonBorderSize;
     SP<Config::Values::CBoolValue> barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover;
-    SP<Config::Values::CStringValue> barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, workspaceTag;
+    SP<Config::Values::CStringValue> barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, workspaceTag, glassTag;
   } config;
 };
 
