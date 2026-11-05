@@ -676,7 +676,7 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
   // The app icon sits before the title, sized to the text and kept inside the bar.
   const auto TEXTSIZE = g_pOmarchyFloatingGlobalState->config.barTextSize->value();
   const int iconPx = g_pOmarchyFloatingGlobalState->config.barIcon->value()
-                         ? std::clamp(static_cast<int>(std::round(TEXTSIZE * 1.5 * pMonitor->m_scale)), 0, static_cast<int>(BARBUF.y - 4 * pMonitor->m_scale))
+                         ? std::clamp(static_cast<int>(std::round(TEXTSIZE * 1.5 * pMonitor->m_scale)), 0, std::max(0, static_cast<int>(BARBUF.y - 4 * pMonitor->m_scale)))
                          : 0;
   updateIcon(PWINDOW, iconPx);
   const bool HASICON = iconPx > 0 && m_pIconTex && m_pIconTex->m_texID != 0;
@@ -685,8 +685,10 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
 
   // render title
   const std::string title = currentTitle(PWINDOW);
-  if (ENABLETITLE && (m_szLastTitle != title || m_bWindowSizeChanged || !m_pTextTex || m_pTextTex->m_texID == 0 || m_bTitleColorChanged)) {
+  // The text is fitted to the room the icon leaves, so it is rebuilt when that changes too.
+  if (ENABLETITLE && (m_szLastTitle != title || m_iLastIconWidth != iconWidth || m_bWindowSizeChanged || !m_pTextTex || m_pTextTex->m_texID == 0 || m_bTitleColorChanged)) {
     m_szLastTitle = title;
+    m_iLastIconWidth = iconWidth;
     renderBarTitle(BARBUF, pMonitor->m_scale, iconWidth);
   }
 
@@ -766,18 +768,20 @@ std::string COmarchyFloatingHyprBar::currentTitle(PHLWINDOW window) {
 void COmarchyFloatingHyprBar::updateIcon(PHLWINDOW window, int pixels) {
   if (pixels <= 0) {
     m_pIconTex = nullptr;
-    m_szIconClass.clear();
+    m_szIconPath.clear();
     return;
   }
 
-  if (m_szIconClass == window->metadata().appID() && m_iIconPx == pixels)
+  // The lookup is cached and rescans the desktop entries every couple of
+  // seconds, so an entry installed after the window opened still reaches it.
+  const auto path = omarchyAppIcon(window->metadata().appID());
+  if (path == m_szIconPath && m_iIconPx == pixels)
     return;
 
-  m_szIconClass = window->metadata().appID();
+  m_szIconPath = path;
   m_iIconPx = pixels;
   m_pIconTex = nullptr;
 
-  const auto path = omarchyAppIcon(window->metadata().appID());
   if (path.empty())
     return;
 
@@ -802,7 +806,7 @@ void COmarchyFloatingHyprBar::onConfigReloaded() {
   m_bTitleColorChanged = true;
   m_pTextTex = nullptr;
   m_pIconTex = nullptr;
-  m_szIconClass.clear();
+  m_szIconPath.clear();
 
   g_pDecorationPositioner->repositionDeco(this);
 

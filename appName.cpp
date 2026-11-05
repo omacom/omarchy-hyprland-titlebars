@@ -281,13 +281,14 @@ namespace {
   std::string iconPath(const std::string& icon) {
     if (icon.empty())
       return "";
-    if (icon.starts_with('/')) {
-      std::error_code ec;
-      return fs::is_regular_file(icon, ec) ? icon : "";
-    }
 
     if (const auto cached = g_iconPaths.find(icon); cached != g_iconPaths.end())
       return cached->second;
+
+    if (icon.starts_with('/')) {
+      std::error_code ec;
+      return g_iconPaths[icon] = fs::is_regular_file(icon, ec) ? icon : "";
+    }
 
     std::string found;
     const auto  bases = iconBaseDirs();

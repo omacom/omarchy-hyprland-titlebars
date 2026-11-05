@@ -62,10 +62,11 @@ private:
 
   SP<Render::ITexture> m_pTextTex;
 
-  // The app icon drawn before the title, reloaded when the class or its size changes.
+  // The app icon drawn before the title, reloaded when its file or size changes.
   SP<Render::ITexture> m_pIconTex;
-  std::string m_szIconClass;
+  std::string m_szIconPath;
   int m_iIconPx = 0;
+  int m_iLastIconWidth = 0;
 
   bool m_bWindowSizeChanged = false;
   bool m_hidden = false;
