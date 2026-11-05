@@ -115,7 +115,9 @@ bool COmarchyFloatingHyprBar::inputIsValid() {
   auto focusState = Desktop::focusState();
   auto window = focusState->window();
 
-  if (WINDOWATCURSOR != m_pWindow && m_pWindow != window)
+  // The focused window's bar can sit under another window, and a press there
+  // belongs to that window.
+  if (WINDOWATCURSOR != m_pWindow && (m_pWindow != window || WINDOWATCURSOR))
     return false;
 
   PHLLS foundSurface = nullptr;

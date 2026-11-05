@@ -256,6 +256,18 @@ end
     assert len(times) >= 2 and times[-1] - times[-2] < 300, times
     print('PASS: a titlebar press released after focus moves away leaves the next click intact', flush=True)
 
+    # The focused window's bar can sit under another window, and a press there
+    # belongs to the window on top.
+    ctl('dispatch', f'hl.dsp.window.move({{ x = 160, y = 220, window = "address:{second_address}" }})')
+    ctl('dispatch', f'hl.dsp.focus({{ window = "address:{third_address}" }})')
+    ctl('dispatch', f'hl.dsp.window.alter_zorder({{ mode = "top", window = "address:{second_address}" }})')
+    time.sleep(.3)
+    covered = {window['address']: window for window in json.loads(ctl('clients', '-j'))}[third_address]
+    pointer(['move 300 305', 'wait 100', 'down', 'wait 80', 'move 340 345', 'wait 80', 'up'])
+    windows = {window['address']: window for window in json.loads(ctl('clients', '-j'))}
+    assert json.loads(ctl('activewindow', '-j'))['address'] == second_address, windows
+    assert windows[third_address]['at'] == covered['at'], windows
+    print('PASS: a press over a covered titlebar goes to the window on top', flush=True)
     released.terminate()
     released.wait(timeout=5)
     for _ in range(60):
