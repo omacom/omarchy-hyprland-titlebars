@@ -61,6 +61,8 @@ private:
   CBox m_bAssignedBox;
 
   SP<Render::ITexture> m_pTextTex;
+  // The dimmed "App ›" drawn before the title.
+  SP<Render::ITexture> m_pPrefixTex;
 
   // The app icon drawn before the title, reloaded when its file or size changes.
   SP<Render::ITexture> m_pIconTex;
@@ -88,6 +90,7 @@ private:
   void renderBarTitle(const Vector2D &bufferSize, const float scale, const int reservedWidth);
   void updateIcon(PHLWINDOW window, int pixels);
   std::string currentTitle(PHLWINDOW window);
+  std::string currentPrefix(PHLWINDOW window, const std::string &title);
   void renderBarButtons(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
   void renderBarButtonsText(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
   void damageOnButtonHover();
@@ -115,6 +118,7 @@ private:
   CHyprSignalListener m_pMouseMoveCallback;
 
   std::string m_szLastTitle;
+  std::string m_szLastPrefix;
 
   bool m_bDraggingThis = false;
   bool m_bTouchEv = false;

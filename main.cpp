@@ -215,6 +215,8 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:bar_title_source", "Title the bar with the window's own title (\"title\") or its app's name (\"app\")", "title");
   g_pOmarchyFloatingGlobalState->config.respectClientDecorations = makeShared<Config::Values::CBoolValue>(
       "plugin:hyprbars:respect_client_decorations", "Draw no bar on windows that draw their own titlebar (client-side decorations)", true);
+  g_pOmarchyFloatingGlobalState->config.barTitleSeparator = makeShared<Config::Values::CStringValue>(
+      "plugin:hyprbars:bar_title_separator", "Separator between the app's name and the window title; empty shows the title alone", "›");
   g_pOmarchyFloatingGlobalState->config.clientDecorationsTag = makeShared<Config::Values::CStringValue>(
       "plugin:hyprbars:client_decorations_tag", "Windows with this tag that ask for client-side decorations draw their own titlebar", "chromium-based-browser");
   g_pOmarchyFloatingGlobalState->config.workspaceTag =
@@ -245,6 +247,7 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barTitleSource);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.respectClientDecorations);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.clientDecorationsTag);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barTitleSeparator);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.iconOnHover);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.onDoubleClick);
 

@@ -421,13 +421,26 @@ void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const f
   const int paddingTotal = scaledBarPadding * 2 + scaledButtonsSize + (ALIGN != "left" ? scaledButtonsSize : 0) + reservedWidth;
   const int maxWidth = std::clamp(static_cast<int>(bufferSize.x - paddingTotal), 0, INT_MAX);
 
+  m_pPrefixTex = nullptr;
   if (m_szLastTitle.empty() || maxWidth < 1) {
     m_pTextTex = nullptr;
     return;
   }
 
   const CHyprColor COLOR = m_bForcedTitleColor.value_or(configColor(COLORVAL));
-  m_pTextTex = g_pHyprRenderer->renderText(m_szLastTitle, COLOR, scaledSize, false, FONT, maxWidth, WEIGHT.m_value);
+
+  // The app's name goes first and gets at most half the room, so the title,
+  // which is what changes, always keeps the rest.
+  int titleWidth = maxWidth;
+  if (!m_szLastPrefix.empty()) {
+    m_pPrefixTex = g_pHyprRenderer->renderText(m_szLastPrefix, COLOR, scaledSize, false, FONT, maxWidth / 2, WEIGHT.m_value);
+    if (m_pPrefixTex && m_pPrefixTex->m_texID != 0)
+      titleWidth -= m_pPrefixTex->m_size.x + std::round(SIZE * 0.6 * scale);
+    else
+      m_pPrefixTex = nullptr;
+  }
+
+  m_pTextTex = titleWidth > 0 ? g_pHyprRenderer->renderText(m_szLastTitle, COLOR, scaledSize, false, FONT, titleWidth, WEIGHT.m_value) : nullptr;
 }
 
 size_t COmarchyFloatingHyprBar::getVisibleButtonCount(Config::INTEGER barButtonPadding, Config::INTEGER barPadding, const Vector2D &bufferSize,
@@ -685,9 +698,12 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
 
   // render title
   const std::string title = currentTitle(PWINDOW);
+  const std::string prefix = currentPrefix(PWINDOW, title);
   // The text is fitted to the room the icon leaves, so it is rebuilt when that changes too.
-  if (ENABLETITLE && (m_szLastTitle != title || m_iLastIconWidth != iconWidth || m_bWindowSizeChanged || !m_pTextTex || m_pTextTex->m_texID == 0 || m_bTitleColorChanged)) {
+  if (ENABLETITLE && (m_szLastTitle != title || m_szLastPrefix != prefix || m_iLastIconWidth != iconWidth || m_bWindowSizeChanged || !m_pTextTex ||
+                      m_pTextTex->m_texID == 0 || m_bTitleColorChanged)) {
     m_szLastTitle = title;
+    m_szLastPrefix = prefix;
     m_iLastIconWidth = iconWidth;
     renderBarTitle(BARBUF, pMonitor->m_scale, iconWidth);
   }
@@ -716,7 +732,9 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     const auto scaledButtonsSize = buttonSizes * pMonitor->m_scale;
     const auto scaledBarPadding = BARPADDING * pMonitor->m_scale;
     const bool hasText = ENABLETITLE && m_pTextTex;
-    const double textWidth = hasText ? m_pTextTex->m_size.x : 0;
+    const bool hasPrefix = hasText && m_pPrefixTex;
+    const double prefixWidth = hasPrefix ? m_pPrefixTex->m_size.x + std::round(g_pOmarchyFloatingGlobalState->config.barTextSize->value() * 0.6 * pMonitor->m_scale) : 0;
+    const double textWidth = hasText ? prefixWidth + m_pTextTex->m_size.x : 0;
     const double contentWidth = iconWidth + textWidth - (HASICON && !hasText ? iconGap : 0);
     const auto xOffset = ALIGN == "left" ? std::round(scaledBarPadding + (BUTTONSRIGHT ? 0 : scaledButtonsSize))
                                          : std::round(((BARBUF.x - scaledBorderSize) / 2.0 - contentWidth / 2.0));
@@ -730,9 +748,16 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
       g_pHyprOpenGL->renderTexture(ctx, m_pIconTex, iconBox, {.a = a});
     }
 
+    // The app's name and separator are dimmed, so the title stands out.
+    if (hasPrefix) {
+      const auto yOffset = std::round((BARBUF.y - m_pPrefixTex->m_size.y) / 2.0);
+      CBox prefixBox = {textBox.x + xOffset + iconWidth, textBox.y + yOffset, m_pPrefixTex->m_size.x, m_pPrefixTex->m_size.y};
+      g_pHyprOpenGL->renderTexture(ctx, m_pPrefixTex, prefixBox, {.a = a * 0.5f});
+    }
+
     if (hasText) {
       const auto yOffset = std::round((BARBUF.y - m_pTextTex->m_size.y) / 2.0);
-      CBox titleBox = {textBox.x + xOffset + iconWidth, textBox.y + yOffset, m_pTextTex->m_size.x, m_pTextTex->m_size.y};
+      CBox titleBox = {textBox.x + xOffset + iconWidth + prefixWidth, textBox.y + yOffset, m_pTextTex->m_size.x, m_pTextTex->m_size.y};
       g_pHyprOpenGL->renderTexture(ctx, m_pTextTex, titleBox, {.a = a});
     }
   }
@@ -763,6 +788,28 @@ std::string COmarchyFloatingHyprBar::currentTitle(PHLWINDOW window) {
   if (title.empty())
     title = byApp ? window->metadata().title() : omarchyAppName(window->metadata().appID());
   return title;
+}
+
+// The app's name before the window's title, as in "Foot ›", when the title
+// doesn't name the app already: a browser's title usually ends with it, and
+// many apps title their only window with just their name.
+std::string COmarchyFloatingHyprBar::currentPrefix(PHLWINDOW window, const std::string &title) {
+  const auto separator = g_pOmarchyFloatingGlobalState->config.barTitleSeparator->value();
+  if (separator.empty() || title.empty() || g_pOmarchyFloatingGlobalState->config.barTitleSource->value() == "app")
+    return "";
+
+  const auto app = omarchyAppName(window->metadata().appID());
+  if (app.empty())
+    return "";
+
+  auto lower = [](std::string text) {
+    std::ranges::transform(text, text.begin(), [](unsigned char c) { return std::tolower(c); });
+    return text;
+  };
+  if (lower(title).contains(lower(app)))
+    return "";
+
+  return app + " " + separator;
 }
 
 void COmarchyFloatingHyprBar::updateIcon(PHLWINDOW window, int pixels) {
@@ -805,6 +852,7 @@ void COmarchyFloatingHyprBar::onConfigReloaded() {
   m_bButtonsDirty = true;
   m_bTitleColorChanged = true;
   m_pTextTex = nullptr;
+  m_pPrefixTex = nullptr;
   m_pIconTex = nullptr;
   m_szIconPath.clear();
 

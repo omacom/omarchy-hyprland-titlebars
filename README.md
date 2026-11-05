@@ -27,12 +27,13 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
 | `bar_icon` | true | Draw the app's icon before the title. |
 | `bar_title_source` | `title` | `title` shows the window's own title, which follows what the app is doing; `app` shows the app's name instead. Each falls back to the other when empty. |
+| `bar_title_separator` | `›` | With `bar_title_source = "title"`, the app's name goes before the title, dimmed and followed by this separator (`Foot › git push`). It is left out when the title already names the app. Empty shows the title alone. |
 | `respect_client_decorations` | true | Draw no titlebar on windows that draw their own (client-side decorations). |
 | `client_decorations_tag` | `chromium-based-browser` | Windows with this tag that ask for client-side decorations are trusted to draw their own titlebar. Empty trusts none. |
 
 ## Titles
 
-A titlebar shows the window's own title, so it follows what the app is doing: the page a browser has open, the directory a terminal is in. Apps retitle their windows as they go, and the bar is redrawn when they do, even when the window is not focused. With `bar_title_source = "app"` it shows the name of the app the window belongs to instead, which keeps a web app whose title is just its domain reading as the app.
+A titlebar shows the app's name and the window's own title, as in `Foot › git push`, so it follows what the app is doing: the page a browser has open, the directory a terminal is in. Apps retitle their windows as they go, and the bar is redrawn when they do, even when the window is not focused. With `bar_title_source = "app"` it shows the name of the app the window belongs to instead, which keeps a web app whose title is just its domain reading as the app.
 
 The app's name and icon come from the desktop entry that claims the window's class through `StartupWMClass` or its file name. Entries are read from `$XDG_DATA_HOME/applications` and then `$XDG_DATA_DIRS`, so a user's own entry wins, and an entry added while Hyprland runs is picked up within a couple of seconds. The icon is looked up in the GTK icon theme (`gtk-icon-theme-name`), the themes it inherits, and `hicolor`, preferring scalable icons and then the largest raster.
 
