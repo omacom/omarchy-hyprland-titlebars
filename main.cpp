@@ -204,7 +204,7 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   g_pOmarchyFloatingGlobalState->config.onDoubleClick =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:on_double_click", "Action to execute on double click of the bar", "");
   g_pOmarchyFloatingGlobalState->config.onMinimizeRequest = makeShared<Config::Values::CStringValue>(
-      "plugin:hyprbars:on_minimize_request", "Command to run, with %WINDOW% as the window's address, when a window asks to be minimized", "");
+      "plugin:hyprbars:on_minimize_request", "Command to run, with %WINDOW% as the window's address, when a floating window asks to be minimized", "");
   g_pOmarchyFloatingGlobalState->config.onMaximizeRequest = makeShared<Config::Values::CStringValue>(
       "plugin:hyprbars:on_maximize_request",
       "Command to run, with %WINDOW% as the window's address, when a floating window asks to be maximized or restored", "");

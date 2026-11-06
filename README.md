@@ -25,7 +25,7 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | `enabled` | false | Upstream defaults to true. Off here, so a plugin left loaded after the config stops configuring it draws nothing. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
 | `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
-| `on_minimize_request` | empty | Command run when an app asks for its window to be minimized, such as from a minimize button it draws itself. When set, floating windows with a titlebar are also told minimizing is supported, so GTK stops greying out that button. |
+| `on_minimize_request` | empty | Command run when a floating window with a titlebar asks to be minimized, such as from a minimize button it draws itself. When set, those windows are also told minimizing is supported, so GTK stops greying out that button. |
 | `on_maximize_request` | empty | Command run when a floating window with a titlebar asks to be maximized or restored. |
 
 ## Titles

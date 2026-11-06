@@ -149,7 +149,9 @@ void COmarchyFloatingHyprBar::onStateChanged() {
       Config::Supplementary::executor()->spawn(windowCommand(command, PWINDOW));
   };
 
-  if (toplevel->m_state.requestsMinimize.value_or(false))
+  // Only where the bar's own minimize button would be: elsewhere nothing brings
+  // the window back, and the app was never told minimizing is supported.
+  if (toplevel->m_state.requestsMinimize.value_or(false) && onBarWorkspace(PWINDOW))
     run(g_pOmarchyFloatingGlobalState->config.onMinimizeRequest->value());
 
   // Hyprland drops maximize requests here (suppress_event), so a maximize button the
