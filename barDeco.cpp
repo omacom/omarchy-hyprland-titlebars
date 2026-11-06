@@ -20,6 +20,7 @@
 #include <hyprland/src/animation/AnimationManager.hpp>
 #include <hyprland/src/protocols/LayerShell.hpp>
 #include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/ipc/s2/S2.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
@@ -28,6 +29,15 @@
 #include "BarPassElement.hpp"
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include "appName.hpp"
+
+// A titlebar drag holds the pointer button, so the press and release never
+// reach Hyprland's binds and nothing outside the plugin can tell a window is
+// being moved. Report the start and end of each move on socket2, as custom
+// events, so tools can act on a window dropped somewhere, such as snapping it
+// into a layout when it reaches a screen edge. Top-edge resizes don't count.
+static void postDragEvent(const char *name) {
+  IPC::Socket2::sock()->postEvent({.event = "custom", .data = name});
+}
 
 #include <algorithm>
 #include <climits>
@@ -190,6 +200,7 @@ void COmarchyFloatingHyprBar::onTouchMove(Event::SCallbackInfo &info, ITouch::SM
 
     g_layoutManager->beginDragTarget(m_pWindow.lock()->layoutTarget(), MBIND_MOVE);
     m_bDraggingThis = true;
+    startMoveEvent();
   }
 }
 
@@ -236,6 +247,8 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
       g_layoutManager->endDragTarget();
       LOG(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)PWINDOW.get());
     }
+
+    endMoveEvent();
 
     m_bDraggingThis = false;
     m_bDragPending = false;
@@ -312,6 +325,7 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
     LOG(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
   }
 
+  endMoveEvent();
   m_bDragPending = false;
   m_bTouchEv = false;
   m_touchId = 0;
@@ -338,7 +352,22 @@ void COmarchyFloatingHyprBar::handleMovement() {
   g_layoutManager->beginDragTarget(window->layoutTarget(), MBIND_MOVE);
   m_bDraggingThis = true;
   LOG(Log::DEBUG, "[hyprbars] Dragging initiated on {:x}", (uintptr_t)m_pWindow.lock().get());
+  startMoveEvent();
   return;
+}
+
+void COmarchyFloatingHyprBar::startMoveEvent() {
+  if (m_bMoveReported)
+    return;
+  m_bMoveReported = true;
+  postDragEvent("hyprbars:dragstart");
+}
+
+void COmarchyFloatingHyprBar::endMoveEvent() {
+  if (!m_bMoveReported)
+    return;
+  m_bMoveReported = false;
+  postDragEvent("hyprbars:dragend");
 }
 
 bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS,

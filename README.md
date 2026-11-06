@@ -47,6 +47,17 @@ hl.plugin.hyprbars.add_button({
 
 The replacement contains only `0x` and hexadecimal digits; no window title or other application-controlled text enters the command.
 
+## Drag events
+
+A titlebar drag holds the pointer button, so Hyprland's own binds never see the press or release. The plugin reports each titlebar move on socket2 instead, as custom events:
+
+```
+custom>>hyprbars:dragstart
+custom>>hyprbars:dragend
+```
+
+`dragstart` comes once the pointer moves with the button held, and `dragend` when it is let go. A click on the titlebar, a button press, and a resize from the edge above the titlebar send nothing. A tool listening on socket2 can then act on where a window was dropped, for example by snapping it into a layout at a screen edge.
+
 ## Hyprland ABI
 
 A Hyprland plugin is only compatible with the exact Hyprland build whose headers it was compiled against, and Hyprland refuses to load a mismatched build. The package in omarchy-pkgs is rebuilt whenever `hyprland` changes, and the same automated bump moves its `hyprland=` dependency to the version it was rebuilt against, so the package always demands the Hyprland it loads into.

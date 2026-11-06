@@ -7,8 +7,10 @@ import argparse
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
+import threading
 import time
 
 source = Path(__file__).resolve().parent
@@ -84,6 +86,20 @@ end
     pointer(commands)
     return client()
 
+  drag_events = []
+
+  def listen_for_drag_events():
+    events = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    events.connect(str(scratch / 'hypr' / env['HYPRLAND_INSTANCE_SIGNATURE'] / '.socket2.sock'))
+    buffer = b''
+    while True:
+      chunk = events.recv(4096)
+      if not chunk:
+        return
+      buffer += chunk
+      *lines, buffer = buffer.split(b'\n')
+      drag_events.extend(line.decode() for line in lines if line.startswith(b'custom>>hyprbars:drag'))
+
   def capture(name):
     monitor = json.loads(ctl('monitors', '-j'))[0]['name']
     subprocess.run(['grim', '-o', monitor, str(args.artifacts / f'{name}.png')], env=env, check=True)
@@ -153,6 +169,10 @@ end
     assert not ctl('configerrors').strip(), ctl('configerrors')
     capture('floating')
 
+    # Record the plugin's socket2 drag events for the checks below.
+    threading.Thread(target=listen_for_drag_events, daemon=True).start()
+    time.sleep(.1)
+
     # Omarchy draws the border around the titlebar too. Hyprland measures its
     # resize band from the window's content, which puts the top of that band
     # under the titlebar, so the titlebar has to start a resize from the band
@@ -173,6 +193,8 @@ end
     assert after['at'][1] + after['size'][1] == before['at'][1] + before['size'][1], (before, after)
     capture('top-edge-resized')
     print('PASS: dragging just above the titlebar resizes the window from its top edge', flush=True)
+    assert not drag_events, drag_events
+    print('PASS: a top-edge resize sends no drag events', flush=True)
     ctl('eval', 'hl.config({ plugin = { hyprbars = { bar_precedence_over_border = false } } })')
     ctl('dispatch', f'hl.dsp.window.resize({{ x = {before["size"][0]}, y = {before["size"][1]} }})')
     ctl('dispatch', 'hl.dsp.window.center()')
@@ -185,6 +207,10 @@ end
     top = drag_to(650, 1)
     assert top['size'] == original['size'] and top['fullscreen'] == 0, top
     print('PASS: real pointer titlebar drags move the window to any edge without snapping', flush=True)
+    time.sleep(.1)
+    assert drag_events == ['custom>>hyprbars:dragstart', 'custom>>hyprbars:dragend'] * 2, drag_events
+    print('PASS: each titlebar drag reports one dragstart and one dragend on socket2', flush=True)
+    drag_events.clear()
 
     window = client()
     x, y = window['at'][0] + 120, window['at'][1] - 15
@@ -192,6 +218,8 @@ end
     assert client()['fullscreen'] == 1, client()
     capture('maximized')
     print('PASS: titlebar double-click maximize', flush=True)
+    assert not drag_events, drag_events
+    print('PASS: titlebar clicks send no drag events', flush=True)
     restored = drag_to(650, 220)
     assert restored['fullscreen'] == 0 and restored['size'] == original['size'], restored
     print('PASS: dragging a maximized titlebar restores its size under the pointer', flush=True)

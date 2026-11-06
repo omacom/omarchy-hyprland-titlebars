@@ -93,6 +93,8 @@ private:
   void handleUpEvent(Event::SCallbackInfo &info);
   bool startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords);
   void handleMovement();
+  void startMoveEvent();
+  void endMoveEvent();
   bool doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, bool BUTTONSRIGHT);
 
   CBox assignedBoxGlobal();
@@ -110,6 +112,7 @@ private:
   bool m_bTouchEv = false;
   bool m_bDragPending = false;
   bool m_bCancelledDown = false;
+  bool m_bMoveReported = false;
   int m_touchId = 0;
 
   // store hover state for buttons as a bitfield
