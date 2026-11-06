@@ -25,6 +25,8 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | `enabled` | false | Upstream defaults to true. Off here, so a plugin left loaded after the config stops configuring it draws nothing. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
 | `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
+| `on_minimize_request` | empty | Command run when an app asks for its window to be minimized, such as from a minimize button it draws itself. When set, floating windows with a titlebar are also told minimizing is supported, so GTK stops greying out that button. |
+| `on_maximize_request` | empty | Command run when a floating window with a titlebar asks to be maximized or restored. |
 
 ## Titles
 
@@ -34,9 +36,17 @@ A titlebar shows the name of the app the window belongs to, when a desktop entry
 
 A button under the pointer is highlighted in its own icon color at low opacity, so the effect follows any theme without a setting of its own.
 
+## Buttons apps draw themselves
+
+Apps that draw their own titlebar, such as Chrome and GNOME apps, draw their own minimize and maximize buttons too, and Hyprland drops both requests: it has no minimized state, and Omarchy suppresses maximize events. `on_minimize_request` and `on_maximize_request` hand them to commands instead, typically the ones the titlebar's own buttons run.
+
+Hyprland tells every window it is maximized, so apps never draw shadows or margins, and keeps it that way. An app's maximize button therefore always asks to be restored, and on a floating workspace either request toggles the window. After running the command, the plugin tells the app it was restored, waits for the app to acknowledge that, and tells it it is maximized again; Chrome ignores its maximize button until it has heard back.
+
+Minimizing moves a window to a hidden special workspace, but Hyprland can leave focus on it, so the app never hears it went away nor came back. Chrome takes itself for minimized until it is activated again. The plugin tells a window it is inactive while it sits on a hidden special workspace, and active again, if focused, when it leaves.
+
 ## Window targeting with `%WINDOW%`
 
-Button `action` commands and `on_double_click` may contain `%WINDOW%`. Every occurrence is replaced synchronously with the clicked titlebar's window address, such as `0x1234abcd`, before the command is spawned. Use it to keep asynchronous actions targeted at the clicked window when focus changes before the command runs:
+Button `action` commands, `on_double_click`, `on_minimize_request` and `on_maximize_request` may contain `%WINDOW%`. Every occurrence is replaced synchronously with the clicked titlebar's window address, such as `0x1234abcd`, before the command is spawned. Use it to keep asynchronous actions targeted at the clicked window when focus changes before the command runs:
 
 ```lua
 hl.plugin.hyprbars.add_button({
