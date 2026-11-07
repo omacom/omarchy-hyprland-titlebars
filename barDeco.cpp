@@ -36,7 +36,9 @@
 // events, so tools can act on a window dropped somewhere, such as snapping it
 // into a layout when it reaches a screen edge. Top-edge resizes don't count.
 static void postDragEvent(const char *name) {
-  IPC::Socket2::sock()->postEvent({.event = "custom", .data = name});
+  // The socket is gone while Hyprland shuts down and destroys the bars.
+  if (const auto &socket = IPC::Socket2::sock())
+    socket->postEvent({.event = "custom", .data = name});
 }
 
 #include <algorithm>
@@ -80,7 +82,11 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
   m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
 }
 
-COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() { std::erase(g_pOmarchyFloatingGlobalState->bars, m_self); }
+COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() {
+  // A window closed mid-drag never sees the release, so end its move here.
+  endMoveEvent();
+  std::erase(g_pOmarchyFloatingGlobalState->bars, m_self);
+}
 
 SDecorationPositioningInfo COmarchyFloatingHyprBar::getPositioningInfo() {
   const auto HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
@@ -308,8 +314,12 @@ bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHL
 }
 
 void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
-  if (m_pWindow.lock() != Desktop::focusState()->window())
+  if (m_pWindow.lock() != Desktop::focusState()->window()) {
+    // Another window took focus during the drag. Still end a reported move,
+    // so every dragstart gets its dragend.
+    endMoveEvent();
     return;
+  }
 
   if (m_bCancelledDown)
     info.cancelled = true;

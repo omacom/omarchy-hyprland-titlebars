@@ -86,19 +86,67 @@ end
     pointer(commands)
     return client()
 
-  drag_events = []
+  def pointer_in_background(commands):
+    helper = subprocess.Popen([str(scratch / 'pointer'), '1280', '800'], stdin=subprocess.PIPE, text=True, env=env)
+    helper.stdin.write('\n'.join(commands) + '\n')
+    helper.stdin.close()
+    return helper
 
-  def listen_for_drag_events():
-    events = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    events.connect(str(scratch / 'hypr' / env['HYPRLAND_INSTANCE_SIGNATURE'] / '.socket2.sock'))
-    buffer = b''
-    while True:
-      chunk = events.recv(4096)
-      if not chunk:
-        return
-      buffer += chunk
-      *lines, buffer = buffer.split(b'\n')
-      drag_events.extend(line.decode() for line in lines if line.startswith(b'custom>>hyprbars:drag'))
+  def titlebar_press(window):
+    # Press on the titlebar and move a little, so the plugin starts a drag.
+    x, y = window['at'][0] + min(window['size'][0] // 2, 220), window['at'][1] - 15
+    commands = [f'move {x} {y}', 'wait 100', 'down', 'wait 120']
+    for i in range(1, 6):
+      commands += [f'move {x + 4 * i} {y + 4 * i}', 'wait 20']
+    return commands
+
+  def open_window(app_id):
+    known = {window['address'] for window in json.loads(ctl('clients', '-j'))}
+    process = subprocess.Popen(['foot', f'--app-id={app_id}', f'--title={app_id}', 'sleep', '90'], env=env, stdout=log, stderr=log)
+    for _ in range(60):
+      new = [window for window in json.loads(ctl('clients', '-j')) if window['address'] not in known]
+      if new:
+        return process, new[0]
+      time.sleep(.1)
+    raise RuntimeError(f'{app_id} did not map')
+
+  drag_events = []
+  drag_events_changed = threading.Condition()
+  drag_reader_error = []
+
+  def listen_for_drag_events(events):
+    try:
+      buffer = b''
+      while True:
+        chunk = events.recv(4096)
+        if not chunk:
+          raise RuntimeError('socket2 closed while recording drag events')
+        buffer += chunk
+        *lines, buffer = buffer.split(b'\n')
+        with drag_events_changed:
+          drag_events.extend(line.decode() for line in lines if line.startswith(b'custom>>hyprbars:drag'))
+          drag_events_changed.notify_all()
+    except Exception as error:
+      with drag_events_changed:
+        drag_reader_error.append(error)
+        drag_events_changed.notify_all()
+
+  def expect_drag_events(*expected, timeout=3, settle=.3):
+    # Wait until the reader has seen as many events as expected, then a little
+    # longer so an extra event would show up, and compare.
+    deadline = time.monotonic() + timeout
+    with drag_events_changed:
+      while len(drag_events) < len(expected) and not drag_reader_error and time.monotonic() < deadline:
+        drag_events_changed.wait(deadline - time.monotonic())
+    time.sleep(settle)
+    with drag_events_changed:
+      if drag_reader_error:
+        raise RuntimeError('drag event reader failed') from drag_reader_error[0]
+      seen = list(drag_events)
+      drag_events.clear()
+    assert seen == [f'custom>>hyprbars:{name}' for name in expected], seen
+
+  DRAG = ('dragstart', 'dragend')
 
   def capture(name):
     monitor = json.loads(ctl('monitors', '-j'))[0]['name']
@@ -170,8 +218,9 @@ end
     capture('floating')
 
     # Record the plugin's socket2 drag events for the checks below.
-    threading.Thread(target=listen_for_drag_events, daemon=True).start()
-    time.sleep(.1)
+    events = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    events.connect(str(scratch / 'hypr' / env['HYPRLAND_INSTANCE_SIGNATURE'] / '.socket2.sock'))
+    threading.Thread(target=listen_for_drag_events, args=(events,), daemon=True).start()
 
     # Omarchy draws the border around the titlebar too. Hyprland measures its
     # resize band from the window's content, which puts the top of that band
@@ -193,7 +242,7 @@ end
     assert after['at'][1] + after['size'][1] == before['at'][1] + before['size'][1], (before, after)
     capture('top-edge-resized')
     print('PASS: dragging just above the titlebar resizes the window from its top edge', flush=True)
-    assert not drag_events, drag_events
+    expect_drag_events()
     print('PASS: a top-edge resize sends no drag events', flush=True)
     ctl('eval', 'hl.config({ plugin = { hyprbars = { bar_precedence_over_border = false } } })')
     ctl('dispatch', f'hl.dsp.window.resize({{ x = {before["size"][0]}, y = {before["size"][1]} }})')
@@ -207,10 +256,48 @@ end
     top = drag_to(650, 1)
     assert top['size'] == original['size'] and top['fullscreen'] == 0, top
     print('PASS: real pointer titlebar drags move the window to any edge without snapping', flush=True)
-    time.sleep(.1)
-    assert drag_events == ['custom>>hyprbars:dragstart', 'custom>>hyprbars:dragend'] * 2, drag_events
+    expect_drag_events(*DRAG, *DRAG)
     print('PASS: each titlebar drag reports one dragstart and one dragend on socket2', flush=True)
-    drag_events.clear()
+
+    # A window closed while its titlebar is held never sees the release.
+    doomed, doomed_window = open_window('omarchy-titlebars-closed-mid-drag')
+    ctl('dispatch', f'hl.dsp.window.move({{ x = 100, y = 100, window = "address:{doomed_window["address"]}" }})')
+    time.sleep(.3)
+    doomed_window = next(window for window in json.loads(ctl('clients', '-j')) if window['address'] == doomed_window['address'])
+    helper = pointer_in_background(titlebar_press(doomed_window) + ['wait 1200', 'up'])
+    time.sleep(.8)
+    ctl('dispatch', f'hl.dsp.window.close({{ window = "address:{doomed_window["address"]}" }})')
+    helper.wait(timeout=10)
+    doomed.wait(timeout=5)
+    expect_drag_events(*DRAG)
+    print('PASS: closing a window mid-drag still reports dragend', flush=True)
+
+    # Focus moving to another window mid-drag must not lose the dragend, and
+    # the next drag must report a fresh dragstart.
+    other, other_window = open_window('omarchy-titlebars-focus-mid-drag')
+    ctl('dispatch', f'hl.dsp.window.move({{ x = 700, y = 420, window = "address:{other_window["address"]}" }})')
+    ctl('dispatch', f'hl.dsp.focus({{ window = "address:{original["address"]}" }})')
+    time.sleep(.3)
+    held = next(window for window in json.loads(ctl('clients', '-j')) if window['address'] == original['address'])
+    helper = pointer_in_background(titlebar_press(held) + ['wait 1200', 'up'])
+    time.sleep(.8)
+    ctl('dispatch', f'hl.dsp.focus({{ window = "address:{other_window["address"]}" }})')
+    helper.wait(timeout=10)
+    expect_drag_events(*DRAG)
+    other.terminate()
+    other.wait(timeout=5)
+    for _ in range(30):
+      if len(json.loads(ctl('clients', '-j'))) == 1:
+        break
+      time.sleep(.1)
+    ctl('dispatch', f'hl.dsp.focus({{ window = "address:{original["address"]}" }})')
+    ctl('dispatch', 'hl.dsp.window.center()')
+    time.sleep(.3)
+    drag_to(650, 220)
+    expect_drag_events(*DRAG)
+    ctl('dispatch', 'hl.dsp.window.center()')
+    time.sleep(.3)
+    print('PASS: a focus change mid-drag still reports dragend, and the next drag starts fresh', flush=True)
 
     window = client()
     x, y = window['at'][0] + 120, window['at'][1] - 15
@@ -218,7 +305,7 @@ end
     assert client()['fullscreen'] == 1, client()
     capture('maximized')
     print('PASS: titlebar double-click maximize', flush=True)
-    assert not drag_events, drag_events
+    expect_drag_events()
     print('PASS: titlebar clicks send no drag events', flush=True)
     restored = drag_to(650, 220)
     assert restored['fullscreen'] == 0 and restored['size'] == original['size'], restored
