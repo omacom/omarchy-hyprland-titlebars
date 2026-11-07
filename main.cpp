@@ -4,6 +4,8 @@
 
 #include <any>
 #include <hyprland/src/Compositor.hpp>
+
+#include "DragTracker.hpp"
 #include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
@@ -237,12 +239,17 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
     onNewWindow(w);
   }
 
+  // Every window move drag, reported to Lua for snapping (hyprbars.drag_*).
+  DragTracker::init({.handle = handle, .luaNamespace = "hyprbars", .eventPrefix = "hyprbars"});
+
   HyprlandAPI::reloadConfig();
 
   return {"hyprbars", "A plugin to add title bars to windows.", "Vaxry", "1.0"};
 }
 
 static void exitOmarchyFloating() {
+  DragTracker::exit();
+
   for (auto &m : State::monitorState()->monitors())
     m->m_scheduledRecalc = true;
 
