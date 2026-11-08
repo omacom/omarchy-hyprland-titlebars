@@ -430,8 +430,8 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
 
     if (INACTIVECOLOR > 0) {
       color = m_bWindowHasFocus ? color : configColor(INACTIVECOLOR);
-      if (INVALIDATEICONS && button.userfg && button.iconTex)
-        button.iconTex = nullptr;
+      if (INVALIDATEICONS && button.userfg)
+        button.iconTex.clear();
     }
 
     color.a *= a;
@@ -490,23 +490,24 @@ void COmarchyFloatingHyprBar::renderBarButtonsText(Render::CRenderContext &ctx, 
     bool hovering = VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + button.size + BARBUTTONPADDING, currentPos.y + button.size);
     noScaleOffset += BARBUTTONPADDING + button.size;
 
-    if ((!button.iconTex || button.iconTex->m_texID == 0) && !button.icon.empty()) {
+    auto &iconTex = button.iconTex[static_cast<int>(std::round(scale * 100))];
+    if ((!iconTex || iconTex->m_texID == 0) && !button.icon.empty()) {
       // render icon
       auto fgcol = button.userfg ? button.fgcol : (button.bgcol.r + button.bgcol.g + button.bgcol.b < 1) ? CHyprColor(0xFFFFFFFF) : CHyprColor(0xFF000000);
 
-      button.iconTex = g_pHyprRenderer->renderText(button.icon, fgcol, std::round(button.size * 0.62 * scale), false, "sans", scaledButtonSize);
+      iconTex = g_pHyprRenderer->renderText(button.icon, fgcol, std::round(button.size * 0.62 * scale), false, "sans", scaledButtonSize);
     }
 
-    if (!button.iconTex || button.iconTex->m_texID == 0)
+    if (!iconTex || iconTex->m_texID == 0)
       continue;
 
     const auto iconX =
-        barBox->x + (BUTTONSRIGHT ? barBox->width - offset - scaledButtonSize / 2.0 : offset + scaledButtonSize / 2.0) - button.iconTex->m_size.x / 2.0;
-    const auto iconY = barBox->y + barBox->height / 2.0 - button.iconTex->m_size.y / 2.0;
-    CBox pos = {iconX, iconY, button.iconTex->m_size.x, button.iconTex->m_size.y};
+        barBox->x + (BUTTONSRIGHT ? barBox->width - offset - scaledButtonSize / 2.0 : offset + scaledButtonSize / 2.0) - iconTex->m_size.x / 2.0;
+    const auto iconY = barBox->y + barBox->height / 2.0 - iconTex->m_size.y / 2.0;
+    CBox pos = {iconX, iconY, iconTex->m_size.x, iconTex->m_size.y};
 
     if (!ICONONHOVER || (ICONONHOVER && m_iButtonHoverState > 0))
-      g_pHyprOpenGL->renderTexture(ctx, button.iconTex, pos, {.a = a});
+      g_pHyprOpenGL->renderTexture(ctx, iconTex, pos, {.a = a});
     offset += scaledButtonsPad + scaledButtonSize;
 
     bool currentBit = (m_iButtonHoverState & (1 << i)) != 0;
@@ -633,9 +634,19 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
   std::string title = omarchyAppName(PWINDOW->metadata().appID());
   if (title.empty())
     title = PWINDOW->metadata().title();
-  if (ENABLETITLE && (m_szLastTitle != title || m_bWindowSizeChanged || !m_pTextTex || m_pTextTex->m_texID == 0 || m_bTitleColorChanged)) {
+  // The title is rendered at the monitor's scale. A window dragged between
+  // monitors of different scales is drawn on each, so one texture is kept per
+  // scale; otherwise the title shows at the other monitor's size.
+  if (m_szLastTitle != title || m_bWindowSizeChanged || m_bTitleColorChanged)
+    m_titleTexByScale.clear();
+  if (ENABLETITLE) {
     m_szLastTitle = title;
-    renderBarTitle(BARBUF, pMonitor->m_scale);
+    auto &tex = m_titleTexByScale[static_cast<int>(std::round(pMonitor->m_scale * 100))];
+    if (!tex || tex->m_texID == 0) {
+      renderBarTitle(BARBUF, pMonitor->m_scale);
+      tex = m_pTextTex;
+    }
+    m_pTextTex = tex;
   }
 
   if (ROUNDING) {
@@ -697,6 +708,7 @@ void COmarchyFloatingHyprBar::onConfigReloaded() {
   m_bButtonsDirty = true;
   m_bTitleColorChanged = true;
   m_pTextTex = nullptr;
+  m_titleTexByScale.clear();
 
   g_pDecorationPositioner->repositionDeco(this);
 
