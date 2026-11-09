@@ -162,7 +162,10 @@ void COmarchyFloatingHyprBar::onTouchDown(Event::SCallbackInfo &info, ITouch::SD
 }
 
 void COmarchyFloatingHyprBar::onTouchUp(Event::SCallbackInfo &info, ITouch::SUpEvent e) {
-  if (!m_bDragPending || !m_bTouchEv || e.touchID != m_touchId)
+  // A tap on a button, or a double tap, leaves no drag pending, and its press
+  // was taken all the same: left armed, the bar would swallow the release of
+  // the next mouse click in the window.
+  if (!m_bTouchEv || e.touchID != m_touchId || !(m_bDragPending || m_bCancelledDown || m_bDraggingThis))
     return;
 
   handleUpEvent(info);
