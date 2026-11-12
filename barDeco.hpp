@@ -2,6 +2,7 @@
 
 #define WLR_USE_UNSTABLE
 
+#include <map>
 #include <hyprland/src/render/decorations/IHyprWindowDecoration.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/gl/GLTexture.hpp>
@@ -30,7 +31,7 @@ public:
 
   virtual void onPositioningReply(const SDecorationPositioningReply &reply);
 
-  virtual void draw(PHLMONITOR, float const &a);
+  virtual void draw(Render::CRenderContext &ctx, PHLMONITOR monitor, const float &a, const Render::SWindowRenderPresentation &presentation);
 
   virtual eDecorationType getDecorationType();
 
@@ -61,6 +62,8 @@ private:
   CBox m_bAssignedBox;
 
   SP<Render::ITexture> m_pTextTex;
+  // Title textures keyed by monitor scale x100; see renderPass().
+  std::map<int, SP<Render::ITexture>> m_titleTexByScale;
 
   bool m_bWindowSizeChanged = false;
   bool m_hidden = false;
@@ -76,10 +79,10 @@ private:
 
   Vector2D cursorRelativeToBar();
 
-  void renderPass(PHLMONITOR, float const &a);
+  void renderPass(Render::CRenderContext &ctx, PHLMONITOR, float const &a);
   void renderBarTitle(const Vector2D &bufferSize, const float scale);
-  void renderBarButtons(CBox *barBox, const float scale, const float a);
-  void renderBarButtonsText(CBox *barBox, const float scale, const float a);
+  void renderBarButtons(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
+  void renderBarButtonsText(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
   void damageOnButtonHover();
 
   bool inputIsValid();
