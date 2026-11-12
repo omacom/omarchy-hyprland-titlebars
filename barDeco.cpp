@@ -115,7 +115,9 @@ bool COmarchyFloatingHyprBar::inputIsValid() {
   auto focusState = Desktop::focusState();
   auto window = focusState->window();
 
-  if (WINDOWATCURSOR != m_pWindow && m_pWindow != window)
+  // The focused window's bar can sit under another window, and a press there
+  // belongs to that window.
+  if (WINDOWATCURSOR != m_pWindow && (m_pWindow != window || WINDOWATCURSOR))
     return false;
 
   PHLLS foundSurface = nullptr;
@@ -160,7 +162,10 @@ void COmarchyFloatingHyprBar::onTouchDown(Event::SCallbackInfo &info, ITouch::SD
 }
 
 void COmarchyFloatingHyprBar::onTouchUp(Event::SCallbackInfo &info, ITouch::SUpEvent e) {
-  if (!m_bDragPending || !m_bTouchEv || e.touchID != m_touchId)
+  // A tap on a button, or a double tap, leaves no drag pending, and its press
+  // was taken all the same: left armed, the bar would swallow the release of
+  // the next mouse click in the window.
+  if (!m_bTouchEv || e.touchID != m_touchId || !(m_bDragPending || m_bCancelledDown || m_bDraggingThis))
     return;
 
   handleUpEvent(info);
@@ -295,9 +300,10 @@ bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHL
 }
 
 void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
-  if (m_pWindow.lock() != Desktop::focusState()->window())
-    return;
-
+  // Only the bar that took the press gets here, and its window can have lost
+  // focus by the release, as one minimized from its own button has. The
+  // release is still this bar's: left armed, it would swallow the release of
+  // a later click in the window, and the app would see the button held down.
   if (m_bCancelledDown)
     info.cancelled = true;
 
