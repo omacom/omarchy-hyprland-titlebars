@@ -23,6 +23,10 @@
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
+#include <hyprland/src/protocols/XDGShell.hpp>
+#include <hyprland/src/protocols/core/Compositor.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 
 #include "globals.hpp"
 #include "BarPassElement.hpp"
@@ -49,6 +53,14 @@ static std::string windowCommand(std::string command, const PHLWINDOW &window) {
   return command;
 }
 
+// The xdg-shell surface of a Wayland window; none for Xwayland windows.
+static SP<CXDGSurfaceResource> xdgSurfaceOf(const PHLWINDOW &window) {
+  const auto surface = window ? window->backend().surface() : nullptr;
+  if (!surface || !surface->m_role || surface->m_role->role() != SURFACE_ROLE_XDG_SHELL)
+    return nullptr;
+  return static_cast<CXDGSurfaceRole *>(surface->m_role.get())->m_xdgSurface.lock();
+}
+
 COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
   m_pWindow = pWindow;
 
@@ -65,12 +77,144 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
   m_pTouchMoveCallback = Event::bus()->m_events.input.touch.motion.listen([&](ITouch::SMotionEvent e, Event::SCallbackInfo &info) { onTouchMove(info, e); });
   m_pMouseMoveCallback = Event::bus()->m_events.input.mouse.move.listen([&](Vector2D c, Event::SCallbackInfo &info) { onMouseMove(c); });
 
+  // Hyprland has no minimized state and drops a client's request for one, so
+  // the minimize button an app draws itself would do nothing. Hand the request
+  // to the same command the bar's own minimize button runs.
+  if (const auto xdg = xdgSurfaceOf(pWindow); xdg && xdg->m_toplevel)
+    m_pMinimizeRequestCallback = xdg->m_toplevel->m_events.stateChanged.listen([this] { onStateChanged(); });
+
   Animation::mgr()->createAnimation(configColor(g_pOmarchyFloatingGlobalState->config.barColor->value()), m_cRealBarColor,
                                     Config::animationTree()->getAnimationPropertyConfig("border"), pWindow, AVARDAMAGE_NONE);
   m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
 }
 
-COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() { std::erase(g_pOmarchyFloatingGlobalState->bars, m_self); }
+// Hyprland tells apps it can maximize and fullscreen a window, but not minimize
+// one, so GTK greys out the minimize button it draws. Where a minimize request has
+// somewhere to go, tell the app so; elsewhere, tell it what Hyprland told it.
+static void advertiseMinimize(const PHLWINDOW &window, bool minimize) {
+  const auto xdg = xdgSurfaceOf(window);
+  const auto toplevel = xdg ? xdg->m_toplevel.lock() : nullptr;
+  const auto surface = xdg ? xdg->m_surface.lock() : nullptr;
+  if (!toplevel || !surface || !surface->getResource())
+    return;
+
+  struct SSearch {
+    void *toplevel;
+    CXdgToplevel *found;
+  } search{toplevel.get(), nullptr};
+  wl_client_for_each_resource(
+      wl_resource_get_client(surface->getResource()->resource()),
+      [](wl_resource *resource, void *data) {
+        auto search = static_cast<SSearch *>(data);
+        if (std::string_view{wl_resource_get_class(resource)} != "xdg_toplevel" || wl_resource_get_version(resource) < 5)
+          return WL_ITERATOR_CONTINUE;
+        const auto object = static_cast<CXdgToplevel *>(wl_resource_get_user_data(resource));
+        if (!object || object->data() != search->toplevel)
+          return WL_ITERATOR_CONTINUE;
+        search->found = object;
+        return WL_ITERATOR_STOP;
+      },
+      &search);
+  if (!search.found)
+    return;
+
+  wl_array capabilities;
+  wl_array_init(&capabilities);
+  for (const auto capability : {XDG_TOPLEVEL_WM_CAPABILITIES_MAXIMIZE, XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN, XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE}) {
+    if (capability == XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE && !minimize)
+      continue;
+    *static_cast<uint32_t *>(wl_array_add(&capabilities, sizeof(uint32_t))) = capability;
+  }
+  search.found->sendWmCapabilities(&capabilities);
+  wl_array_release(&capabilities);
+  // Capabilities take effect with the next configure.
+  xdg->scheduleConfigure();
+}
+
+// A window the bar belongs to: floating, on a workspace tagged for bars.
+static bool onBarWorkspace(const PHLWINDOW &window) {
+  const auto tag = g_pOmarchyFloatingGlobalState->config.workspaceTag->value();
+  return window->isFloating() && (tag.empty() || window->m_ruleApplicator->m_tagKeeper.isTagged(tag));
+}
+
+void COmarchyFloatingHyprBar::onStateChanged() {
+  const auto PWINDOW = m_pWindow.lock();
+  const auto xdg = xdgSurfaceOf(PWINDOW);
+  const auto toplevel = xdg ? xdg->m_toplevel.lock() : nullptr;
+  if (!toplevel)
+    return;
+
+  auto run = [&](const std::string &command) {
+    if (!command.empty())
+      Config::Supplementary::executor()->spawn(windowCommand(command, PWINDOW));
+  };
+
+  // Only where the bar's own minimize button would be: elsewhere nothing brings
+  // the window back, and the app was never told minimizing is supported.
+  if (toplevel->m_state.requestsMinimize.value_or(false) && onBarWorkspace(PWINDOW))
+    run(g_pOmarchyFloatingGlobalState->config.onMinimizeRequest->value());
+
+  // Hyprland drops maximize requests here (suppress_event), so a maximize button the
+  // app draws itself would do nothing either. Hyprland also tells every window it
+  // is maximized, as it draws no client margins, so apps only ever ask to be
+  // restored; on a floating workspace either request toggles the window, as the
+  // bar's maximize button does.
+  const auto onMaximize = g_pOmarchyFloatingGlobalState->config.onMaximizeRequest->value();
+  if (toplevel->m_state.requestsMaximize.has_value() && !onMaximize.empty() && onBarWorkspace(PWINDOW)) {
+    run(onMaximize);
+
+    // An app that asked to be restored waits to hear it was, and Chrome stops asking
+    // anything until then. Tell it so, and once it has seen that, tell it again it
+    // is maximized, as Hyprland would have it. Both in one configure would cancel
+    // out, so the second waits for the app to ack the first.
+    m_restoreSerial = toplevel->setMaximized(false);
+    m_pRestoreAckCallback = xdg->m_events.ack.listen([this](uint32_t serial) {
+      if (serial >= m_restoreSerial)
+        tellMaximized();
+    });
+    if (!m_pTellMaximizedTimer) {
+      m_pTellMaximizedTimer = makeShared<CEventLoopTimer>(std::nullopt, [this](SP<CEventLoopTimer>, void *) { tellMaximized(); }, nullptr);
+      g_pEventLoopManager->addTimer(m_pTellMaximizedTimer);
+    }
+    m_pTellMaximizedTimer->updateTimeout(std::chrono::milliseconds(500));
+  }
+}
+
+// Hyprland leaves focus on a window it hides on a special workspace, as minimizing
+// does, so the app never hears it went away nor came back. Chrome takes itself for
+// minimized until it is activated again, and ignores its own maximize button until
+// then. Tell it it is not active while hidden, and active again once it is back.
+void COmarchyFloatingHyprBar::onMovedToWorkspace(PHLWORKSPACE workspace) {
+  const auto PWINDOW = m_pWindow.lock();
+  const auto xdg = xdgSurfaceOf(PWINDOW);
+  const auto toplevel = xdg ? xdg->m_toplevel.lock() : nullptr;
+  if (!toplevel || !workspace)
+    return;
+
+  if (workspace->type() == Workspace::eWorkspaceType::SPECIAL && !workspace->isVisibleNotCovered()) {
+    m_bHiddenInactive = true;
+    toplevel->setActive(false);
+  } else if (m_bHiddenInactive) {
+    m_bHiddenInactive = false;
+    toplevel->setActive(Desktop::focusState()->window() == PWINDOW);
+  }
+}
+
+void COmarchyFloatingHyprBar::tellMaximized() {
+  m_pRestoreAckCallback.reset();
+  if (m_pTellMaximizedTimer)
+    m_pTellMaximizedTimer->updateTimeout(std::nullopt);
+  const auto PWINDOW = m_pWindow.lock();
+  const auto xdg = xdgSurfaceOf(PWINDOW);
+  if (const auto toplevel = xdg ? xdg->m_toplevel.lock() : nullptr)
+    toplevel->setMaximized(true);
+}
+
+COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() {
+  if (m_pTellMaximizedTimer)
+    g_pEventLoopManager->removeTimer(m_pTellMaximizedTimer);
+  std::erase(g_pOmarchyFloatingGlobalState->bars, m_self);
+}
 
 SDecorationPositioningInfo COmarchyFloatingHyprBar::getPositioningInfo() {
   const auto HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
@@ -773,6 +917,12 @@ void COmarchyFloatingHyprBar::updateRules() {
     m_bForcedTitleColor =
         CHyprColor(Config::ParserUtils::parseColor(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pOmarchyFloatingGlobalState->titleColorRuleIdx)->effect)
                        .value_or(0));
+
+  const bool MINIMIZE = onBarWorkspace(PWINDOW) && !g_pOmarchyFloatingGlobalState->config.onMinimizeRequest->value().empty();
+  if (m_bAdvertisedMinimize != MINIMIZE) {
+    m_bAdvertisedMinimize = MINIMIZE;
+    advertiseMinimize(PWINDOW, MINIMIZE);
+  }
 
   if (prevHidden != m_hidden) {
     g_pDecorationPositioner->repositionDeco(this);

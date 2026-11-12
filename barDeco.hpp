@@ -12,6 +12,7 @@
 #include <hyprland/src/helpers/AnimatedVariable.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/helpers/signal/Signal.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include "globals.hpp"
 
 #define private public
@@ -51,6 +52,7 @@ public:
 
   void updateRules();
   void onConfigReloaded();
+  void onMovedToWorkspace(PHLWORKSPACE workspace);
 
   WP<COmarchyFloatingHyprBar> m_self;
 
@@ -106,6 +108,18 @@ private:
 
   CHyprSignalListener m_pTouchMoveCallback;
   CHyprSignalListener m_pMouseMoveCallback;
+  CHyprSignalListener m_pMinimizeRequestCallback;
+  CHyprSignalListener m_pRestoreAckCallback;
+
+  // Tells an app it is maximized again after telling it it was restored.
+  SP<CEventLoopTimer> m_pTellMaximizedTimer;
+  uint32_t m_restoreSerial = 0;
+  // Told inactive while hidden on a special workspace.
+  bool m_bHiddenInactive = false;
+  std::optional<bool> m_bAdvertisedMinimize;
+
+  void onStateChanged();
+  void tellMaximized();
 
   std::string m_szLastTitle;
 
