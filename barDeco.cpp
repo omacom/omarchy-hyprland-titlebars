@@ -644,6 +644,10 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     if (windowBox.w < 1 || windowBox.h < 1)
       return;
 
+    // Hyprland's stencil pass for blurred surfaces that discard by alpha leaves
+    // the write mask at 0, and a masked clear clears nothing: the bar would be
+    // cut by whatever stencil that pass left behind.
+    glStencilMask(0xFF);
     glClearStencil(0);
     glClear(GL_STENCIL_BUFFER_BIT);
 
