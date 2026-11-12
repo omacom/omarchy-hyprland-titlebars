@@ -2,7 +2,7 @@
 
 A native Hyprland plugin that gives Omarchy's floating workspace mode its window titlebars. It draws theme-neutral titlebars on floating windows; dragging one moves the window, and a maximized window dragged by its titlebar comes back to its floating size under the pointer.
 
-Omarchy core has no build step, so the plugin ships as its own package, `omarchy-hyprland-titlebars`, which [omarchy-pkgs](https://github.com/omacom/omarchy-pkgs) builds from this repository's release tags. Omarchy loads it from its Lua config only while a workspace floats, from a fixed path:
+Omarchy core has no build step, so the plugin ships as its own package, `omarchy-hyprland-titlebars`, which [omarchy-pkgs](https://github.com/omacom/omarchy-pkgs) builds from this repository's GitHub releases. Omarchy loads it from its Lua config only while a workspace floats, from a fixed path:
 
 ```lua
 hl.plugin.load("/usr/lib/omarchy-hyprland-titlebars/titlebars.so")
@@ -66,7 +66,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-To release, tag the commit `vX.Y.Z` and push the tag. omarchy-pkgs builds the package from that tag's source tarball.
+To release, make a GitHub release tagged `vX.Y.Z` with notes on what changed. omarchy-pkgs watches this repository's releases and turns each new one into a package update within the hour, built from the tag's source tarball.
 
 ## Verifying
 
