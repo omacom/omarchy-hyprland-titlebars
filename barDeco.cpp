@@ -511,6 +511,7 @@ void COmarchyFloatingHyprBar::renderBarButtonsText(Render::CRenderContext &ctx, 
         barBox->x + (BUTTONSRIGHT ? barBox->width - offset - scaledButtonSize / 2.0 : offset + scaledButtonSize / 2.0) - iconTex->m_size.x / 2.0;
     const auto iconY = barBox->y + barBox->height / 2.0 - iconTex->m_size.y / 2.0;
     CBox pos = {iconX, iconY, iconTex->m_size.x, iconTex->m_size.y};
+    pos.round(); // snap to whole pixels, otherwise the icon is sampled at a half-pixel offset and blurs (hyprwm/hyprland-plugins#711)
 
     if (!ICONONHOVER || (ICONONHOVER && m_iButtonHoverState > 0))
       g_pHyprOpenGL->renderTexture(ctx, iconTex, pos, {.a = a});
