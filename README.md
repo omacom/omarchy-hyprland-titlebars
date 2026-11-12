@@ -25,10 +25,16 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | `enabled` | false | Upstream defaults to true. Off here, so a plugin left loaded after the config stops configuring it draws nothing. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
 | `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
+| `glass_tag` | `transparent-window` | Windows with this tag, the ones Omarchy makes see-through, get a bar of frosted glass: `bar_color` at `glass_opacity` over a blur of what is behind it, with button faces left out so they don't sit on the glass as solid squares. Empty draws every bar solid. |
+| `glass_opacity` | 0.6 | Opacity of `bar_color` on a glass bar. |
 
 ## Titles
 
 A titlebar shows the name of the app the window belongs to, when a desktop entry claims the window's class through `StartupWMClass` or its file name, and the window's own title otherwise. A web app titles its window with its page or just its domain, so this is what keeps `web.whatsapp.com` reading WhatsApp. Entries are read from `$XDG_DATA_HOME/applications` and then `$XDG_DATA_DIRS`, so a user's own entry wins, and an entry added while Hyprland runs is picked up within a couple of seconds.
+
+## Glass
+
+A see-through window under a solid bar looks like two different things stacked. Windows that carry `glass_tag` get a bar of frosted glass instead, blurred with the same `decoration:blur` settings as the window, so the bar and the window read as one pane. Their buttons draw only their symbol and the hover highlight. The blur needs `decoration:blur:enabled`; without it the bar is just translucent.
 
 ## Button hover
 

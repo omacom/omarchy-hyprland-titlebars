@@ -48,6 +48,7 @@ public:
   virtual std::string getDisplayName();
 
   PHLWINDOW getOwner();
+  bool glassy();
 
   void updateRules();
   void onConfigReloaded();
