@@ -4,6 +4,7 @@ The candidate library is only ever loaded into the disposable nested compositor,
 never into the parent session.
 """
 import argparse
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,9 @@ import time
 source = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('library', type=Path, help='built titlebars.so to test')
+parser.add_argument('--in-omabox', action='store_true', help='test the current isolated Omabox compositor instead of starting another nested instance')
+parser.add_argument('--no-screenshots', action='store_true', help='run assertions without grim (e.g. software rendering VMs)')
+parser.add_argument('--tablet-fixture', type=Path, help='synthetic Aquamarine fixture library; handler coverage, not hardware input')
 parser.add_argument('--artifacts', type=Path, default=Path('/tmp/omarchy-hyprland-titlebars-verification'))
 args = parser.parse_args()
 args.library = args.library.resolve()
@@ -21,13 +25,23 @@ if not args.library.is_file():
   parser.error(f'{args.library} does not exist')
 args.artifacts.mkdir(parents=True, exist_ok=True)
 
-with tempfile.TemporaryDirectory(prefix='oht-') as scratch:
+with tempfile.TemporaryDirectory(prefix='oht-') as scratch, ExitStack() as cleanup:
   scratch = Path(scratch)
   for kind, target in [('client-header', 'pointer-protocol.h'), ('private-code', 'pointer-protocol.c')]:
     subprocess.run(['wayland-scanner', kind, str(source / 'wlr-virtual-pointer-unstable-v1.xml'), str(scratch / target)], check=True)
   subprocess.run(['cc', str(source / 'pointer.c'), str(scratch / 'pointer-protocol.c'), '-I', str(scratch), '-lwayland-client', '-o', str(scratch / 'pointer')], check=True)
   unconfigured = scratch / 'unconfigured'
-  config = scratch / 'hyprland.lua'
+  if args.in_omabox and (os.environ.get('OMABOX') != '1' or not os.environ.get('OMABOX_NAME')):
+    raise RuntimeError('--in-omabox requires omabox run inside a disposable box')
+  config = Path.home() / '.config/hypr/looknfeel.lua' if args.in_omabox else scratch / 'hyprland.lua'
+  saved_config = config.read_bytes() if args.in_omabox else None
+  if args.in_omabox:
+    def restore_box_config():
+      # Register before the first overwrite. This runs on setup failures and
+      # after any failing process/plugin cleanup; the file is restored before IPC.
+      config.write_bytes(saved_config)
+      subprocess.run(['hyprctl', 'reload'], capture_output=True, text=True, timeout=5, check=True)
+    cleanup.callback(restore_box_config)
   config.write_text('''
 hl.monitor({ output = "", mode = "1280x800@60", position = "0x0", scale = 1 })
 hl.config({ general = { gaps_in = 8, gaps_out = 8, border_size = 2, resize_on_border = true }, animations = { enabled = false }, input = { follow_mouse = 0 }, misc = { disable_hyprland_logo = true, disable_splash_rendering = true } })
@@ -47,11 +61,22 @@ end
   if len(parent_instances) != 1:
     raise RuntimeError('Verification expects exactly one parent compositor')
   parent_signature = parent_instances[0]['instance']
+  box_signature = os.environ.get('HYPRLAND_INSTANCE_SIGNATURE')
   parent_display = str(Path(os.environ['XDG_RUNTIME_DIR']) / parent_instances[0]['wl_socket'])
   env = dict(os.environ, XDG_RUNTIME_DIR=str(scratch), AQ_BACKEND='wayland', WAYLAND_DISPLAY=parent_display, HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_SD_VARS='1')
-  env.pop('HYPRLAND_INSTANCE_SIGNATURE', None)
+  if args.in_omabox:
+    env = dict(os.environ)
+  else:
+    env.pop('HYPRLAND_INSTANCE_SIGNATURE', None)
+  if args.tablet_fixture:
+    env['OHT_TABLET_FIXTURES'] = '1'
+
   log = (args.artifacts / 'compositor.log').open('w')
-  compositor = subprocess.Popen(['Hyprland', '--config', str(config)], env=env, stdout=log, stderr=log)
+  cleanup.callback(log.close)
+  class BoxCompositor:
+    def poll(self):
+      return None if Path('/proc', str(parent_instances[0]['pid'])).exists() else 1
+  compositor = BoxCompositor() if args.in_omabox else subprocess.Popen(['Hyprland', '--config', str(config)], env=env, stdout=log, stderr=log)
   terminal = None
   secondary = None
 
@@ -59,10 +84,14 @@ end
     # Never let a plugin command reach the parent compositor.
     if argv[0] == 'plugin':
       signature = env.get('HYPRLAND_INSTANCE_SIGNATURE')
-      if not signature or signature == parent_signature or env['XDG_RUNTIME_DIR'] != str(scratch):
+      if not signature or (args.in_omabox and signature != box_signature) or (not args.in_omabox and (signature == parent_signature or env['XDG_RUNTIME_DIR'] != str(scratch))):
         raise RuntimeError('Refusing to send a plugin command outside the nested compositor')
-    result = subprocess.run(['hyprctl', *argv], env=env, capture_output=True, text=True, timeout=5, check=True)
+    result = subprocess.run(['hyprctl', *argv], env=env, capture_output=True, text=True, timeout=5)
+    if result.returncode:
+      raise RuntimeError(f'hyprctl {argv}: {result.stdout} {result.stderr}')
     if result.stdout.startswith('Err') or "Couldn't" in result.stdout:
+      raise RuntimeError(result.stdout)
+    if argv[0] == "plugin" and argv[1] in ("load", "unload") and result.stdout.strip() != "ok":
       raise RuntimeError(result.stdout)
     return result.stdout
 
@@ -85,6 +114,8 @@ end
     return client()
 
   def capture(name):
+    if args.no_screenshots:
+      return
     monitor = json.loads(ctl('monitors', '-j'))[0]['name']
     subprocess.run(['grim', '-o', monitor, str(args.artifacts / f'{name}.png')], env=env, check=True)
 
@@ -103,6 +134,8 @@ end
       time.sleep(.1)
     else:
       raise RuntimeError('Isolated compositor did not start')
+    if args.in_omabox:
+      ctl('reload')
     time.sleep(.2)
     terminal = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-isolated-test', '--title=Titlebars — isolated verification', 'sleep', '90'], env=env, stdout=log, stderr=log)
     for _ in range(60):
@@ -128,7 +161,7 @@ end
         assert client()
       ctl('plugin', 'unload', str(library))
       time.sleep(.15)
-      assert not json.loads(ctl('plugin', 'list', '-j'))
+      assert all(p['name'] == 'oht-tablet-fixture' for p in json.loads(ctl('plugin', 'list', '-j')))
     print('PASS: repeated load/reload/unload, interleaved with the XP fork', flush=True)
 
     # Hyprland keeps a plugin loaded after the config stops asking for it, and
@@ -151,6 +184,7 @@ end
     ctl('reload')
     time.sleep(.25)
     assert not ctl('configerrors').strip(), ctl('configerrors')
+    (args.artifacts / 'monitors.json').write_text(ctl('monitors', '-j'))
     capture('floating')
 
     # Omarchy draws the border around the titlebar too. Hyprland measures its
@@ -213,6 +247,10 @@ end
     assert len(windows) == 2, windows
     second_address = next(window['address'] for window in windows if window['address'] != first_address)
     ctl('dispatch', f'hl.dsp.window.move({{ x = 690, y = 320, window = "address:{second_address}" }})')
+    if args.tablet_fixture:
+      from tablet_checks import verify_tablet
+      verify_tablet(ctl, pointer, config, args.artifacts, args.library, args.tablet_fixture, first_address, second_address, env)
+
     pointer(['move 180 305', 'wait 450', 'down', 'up', 'wait 100', 'down', 'up'])
     ctl('dispatch', f'hl.dsp.focus({{ window = "address:{second_address}" }})')
     time.sleep(.7)
@@ -252,10 +290,14 @@ end
     if terminal and terminal.poll() is None:
       terminal.terminate()
       terminal.wait(timeout=5)
-    compositor.terminate()
-    try:
-      compositor.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-      compositor.kill()
-      compositor.wait()
-    log.close()
+    if args.in_omabox:
+      for name, library in [('oht-tablet-fixture', args.tablet_fixture), ('hyprbars', args.library)]:
+        if library and any(p['name'] == name for p in json.loads(ctl('plugin', 'list', '-j'))):
+          ctl('plugin', 'unload', str(library.resolve()))
+    else:
+      compositor.terminate()
+      try:
+        compositor.wait(timeout=5)
+      except subprocess.TimeoutExpired:
+        compositor.kill()
+        compositor.wait()

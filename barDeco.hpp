@@ -85,7 +85,8 @@ private:
   void renderBarButtonsText(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
   void damageOnButtonHover();
 
-  bool inputIsValid();
+  bool inputIsValid(std::optional<Vector2D> position = std::nullopt);
+  static std::string windowCommand(std::string command, const PHLWINDOW &window);
   void onMouseButton(Event::SCallbackInfo &info, IPointer::SButtonEvent e);
   void onTouchDown(Event::SCallbackInfo &info, ITouch::SDownEvent e);
   void onTouchUp(Event::SCallbackInfo &info, ITouch::SUpEvent e);
@@ -124,4 +125,5 @@ private:
   size_t getVisibleButtonCount(Config::INTEGER barButtonPadding, Config::INTEGER barPadding, const Vector2D &bufferSize, const float scale);
 
   friend class COmarchyFloatingBarPassElement;
+  friend class COmarchyFloatingTabletInput;
 };

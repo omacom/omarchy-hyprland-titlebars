@@ -77,3 +77,77 @@ python3 tools/verify.py build/titlebars.so
 The verifier needs a running Hyprland session with exactly one Hyprland instance, plus `foot`, `grim`, `wayland-scanner`, and a C compiler. It starts a disposable nested Hyprland with its own runtime directory and never loads the candidate library into the parent compositor. It checks repeated load/reload/unload, interleaved with the Windows XP fork when `/usr/lib/omarchy-windows-xp/hyprbars.so` is installed, and that a loaded plugin the config no longer configures reserves no titlebar space. It then exercises real pointer titlebar dragging to the screen edges without snapping, double-click maximize, and restoring a maximized window by dragging its titlebar. A two-window regression check deliberately delays button and double-click commands and changes focus before they run, to verify that actions keep the clicked window as their target. A final check confirms that `workspace_tag`-scoped titlebars release their space immediately when a window is tiled or untagged.
 
 Screenshots and logs go to `/tmp/omarchy-hyprland-titlebars-verification` by default; pass `--artifacts DIR` to change it.
+
+## Tablet input
+
+Pen tip contact on a titlebar uses the existing button-on-press semantics and
+configured double-click action. A move belongs to its tool and titlebar window;
+other tools, mouse input and touch cannot complete that gesture. Motion preserves
+the grab offset, including maximized-window restoration and monitor transitions.
+Hover and input outside titlebars remain available to applications.
+
+Hyprland 0.56 emits cancellable tablet callbacks before it maps their position or
+updates the cursor. The plugin applies the same active-area transform and uses
+Hyprland's pointer mapping before hit testing. Contact motion moves the captured
+layout target directly: it does not impersonate a mouse bind. Cancellation drops
+the target immediately while retaining weak records for any consumed tip presses
+whose releases have not arrived. Decoration observers follow Hyprland's unique
+ownership; tool, tablet and window references use their shared/weak lifetimes.
+
+### Isolated tablet regression checks
+
+The optional fixture sends synthetic Aquamarine tablet-tool events through the
+real CTablet, pointer manager, input manager and plugin handlers. It contains no
+copy of the production gesture logic and creates no kernel input devices. These
+checks are handler integration coverage, not physical-tablet or libinput coverage.
+
+Build the plugin and fixture against the installed compositor's headers:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TABLET_FIXTURE=ON
+cmake --build build -j2
+omabox up titlebars-tablet --size 1280x800 --no-shell --net isolated --env OHT_TABLET_FIXTURES=1
+omabox -b titlebars-tablet run -- python3 tools/verify.py build/titlebars.so --in-omabox --tablet-fixture build/oht-tablet-fixture.so --artifacts /tmp/titlebars-verification
+```
+
+Client environment isolation has a separate regression that runs the real tablet
+checks with an unusable ambient parent display. The closure-test client must
+still map using the verifier's explicit compositor environment:
+
+```bash
+omabox -b titlebars-tablet run -- python3 tools/verify_environment.py build/titlebars.so --in-omabox --tablet-fixture build/oht-tablet-fixture.so --artifacts /tmp/titlebars-client-environment
+```
+
+Verifier cleanup has separate failure-injection coverage. Inside the same disposable
+box, run:
+
+```bash
+omabox -b titlebars-tablet run -- python3 tools/verify_failures.py build/titlebars.so --artifacts /tmp/titlebars-cleanup
+```
+
+This executes the real verifier with failed instance discovery, an invalid instance
+count, and failed plugin unloads, checking that each failure restores the original
+configuration byte for byte. The tablet button marker is reset before each run,
+so an artifacts directory can be reused.
+
+Run from this checkout so Omabox mounts it read-only. The verifier changes only
+the disposable box's configuration, restores it on completion, and unloads its
+plugins. It refuses `--in-omabox` outside an Omabox environment. Screenshots and
+logs are inside the box at the requested artifacts directory; export them before
+`omabox down titlebars-tablet` removes that session.
+
+Checks cover single button activation, delayed double-tap targeting, hover,
+application-event pass-through, grabbed dragging and return to the starting
+position, partial-axis motion, other-tool/mouse interference, touch during an
+owned mouse resize, pending move or button press, release outside the bar,
+proximity loss, tool/device removal, disabled bars, window closure, unload
+and reload, maximized restoration, negative output origins, and mixed monitor
+scales. The existing pointer and workspace-scope checks run in the same session.
+No production plugin or package depends on Omabox or the fixture.
+
+Hardware acceptance still requires a disposable Hyprland session with a real
+physical tablet: confirm it appears under tablets in `hyprctl devices`, then test
+buttons, double-tap, dragging, release outside the bar, hover, a second input
+source, proximity loss and unplugging mid-drag. Repeat across scaled outputs and
+with a window closing mid-drag, then recheck mouse and touchscreen interactions.
+Load the candidate only in that disposable session, not an active work desktop.
