@@ -502,6 +502,11 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
   const auto BUTTONBORDERSIZE = g_pOmarchyFloatingGlobalState->config.buttonBorderSize->value();
   const auto BUTTONBORDERCOLOR = g_pOmarchyFloatingGlobalState->config.buttonBorderColor->value();
 
+  const auto BARCOLOR = configColor(g_pOmarchyFloatingGlobalState->config.barColor->value());
+  const auto sameRGB = [](const CHyprColor &x, const CHyprColor &y) {
+    return std::abs(x.r - y.r) < 0.004 && std::abs(x.g - y.g) < 0.004 && std::abs(x.b - y.b) < 0.004;
+  };
+
   const bool BUTTONSRIGHT = ALIGNBUTTONS != "left";
   const auto visibleCount = getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale);
   const bool INVALIDATEICONS = m_bButtonsDirty || m_bWindowSizeChanged;
@@ -519,6 +524,12 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
       if (INVALIDATEICONS && button.userfg)
         button.iconTex.clear();
     }
+
+    // Buttons painted in the bar's own colour are meant to blend into it. A
+    // window whose bar takes another colour from a bar_color rule takes these
+    // buttons along, or they would show as squares of the default colour.
+    if (m_bForcedBarColor && sameRGB(button.bgcol, BARCOLOR))
+      color = m_cRealBarColor->value();
 
     color.a *= a;
 
