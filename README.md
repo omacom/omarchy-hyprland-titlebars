@@ -25,10 +25,18 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | `enabled` | false | Upstream defaults to true. Off here, so a plugin left loaded after the config stops configuring it draws nothing. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
 | `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
+| `bar_icon_enabled` | true | Shows the app's icon before the title. |
+| `bar_icon_size` | 0 | Icon size in logical pixels; 0 sizes it from `bar_text_size`. |
 
 ## Titles
 
 A titlebar shows the name of the app the window belongs to, when a desktop entry claims the window's class through `StartupWMClass` or its file name, and the window's own title otherwise. A web app titles its window with its page or just its domain, so this is what keeps `web.whatsapp.com` reading WhatsApp. Entries are read from `$XDG_DATA_HOME/applications` and then `$XDG_DATA_DIRS`, so a user's own entry wins, and an entry added while Hyprland runs is picked up within a couple of seconds.
+
+A Chromium web app's window class names the profile that opened it (`chrome-app.hubspot.com__-Profile_2`), while its desktop entry records the profile that installed it (`-Default`), so classes are also compared without that suffix.
+
+## Icons
+
+The icon before the title is the `Icon` of the same desktop entry, or else an icon named after the window's class. An icon given as a path is used as it is; a name is looked up in the `hicolor` theme, which holds each app's own artwork, under `$XDG_DATA_HOME/icons`, `~/.icons` and `$XDG_DATA_DIRS`, preferring scalable and then the largest size, and then in `/usr/share/pixmaps`. A window with no icon shows its title alone. Icons are rendered per monitor scale, like titles.
 
 ## Button hover
 

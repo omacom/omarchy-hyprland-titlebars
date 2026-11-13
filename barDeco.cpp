@@ -28,6 +28,8 @@
 #include "BarPassElement.hpp"
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include "appName.hpp"
+#include <hyprgraphics/image/Image.hpp>
+#include <cairo/cairo.h>
 
 #include <algorithm>
 #include <climits>
@@ -396,6 +398,55 @@ bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::
   return false;
 }
 
+// The icon is as tall as the title's capitals and a little more, so the two
+// read as one line; bar_icon_size sets it outright.
+int COmarchyFloatingHyprBar::iconSize() const {
+  const auto CONFIGURED = g_pOmarchyFloatingGlobalState->config.barIconSize->value();
+  if (CONFIGURED > 0)
+    return CONFIGURED;
+  return std::max<int>(8, std::round(g_pOmarchyFloatingGlobalState->config.barTextSize->value() * 1.35));
+}
+
+// Width the icon takes in front of the title, gap included; 0 without one.
+float COmarchyFloatingHyprBar::iconSpace(float scale) const {
+  if (!g_pOmarchyFloatingGlobalState->config.barIconEnabled->value() || m_szLastIconPath.empty())
+    return 0;
+  return std::round(iconSize() * scale) + std::round(6 * scale);
+}
+
+// Loads the icon file (PNG, SVG and the rest Hyprland reads) into a square
+// texture of px pixels, scaled to fit and centred, without stretching.
+SP<Render::ITexture> COmarchyFloatingHyprBar::renderBarIcon(int px) {
+  if (m_szLastIconPath.empty() || px < 1)
+    return nullptr;
+
+  Hyprgraphics::CImage image(m_szLastIconPath, Vector2D{static_cast<double>(px), static_cast<double>(px)});
+  if (!image.success())
+    return nullptr;
+
+  const auto SOURCE = image.cairoSurface();
+  if (!SOURCE || !SOURCE->cairo())
+    return nullptr;
+  const auto SOURCESIZE = SOURCE->size();
+  if (SOURCESIZE.x < 1 || SOURCESIZE.y < 1)
+    return nullptr;
+
+  cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, px, px);
+  cairo_t *cr = cairo_create(surface);
+  const double fit = std::min(px / SOURCESIZE.x, px / SOURCESIZE.y);
+  cairo_translate(cr, (px - SOURCESIZE.x * fit) / 2.0, (px - SOURCESIZE.y * fit) / 2.0);
+  cairo_scale(cr, fit, fit);
+  cairo_set_source_surface(cr, SOURCE->cairo(), 0, 0);
+  cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
+  cairo_paint(cr);
+  cairo_destroy(cr);
+  cairo_surface_flush(surface);
+
+  auto texture = g_pHyprRenderer->createTexture(surface);
+  cairo_surface_destroy(surface);
+  return texture;
+}
+
 void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const float scale) {
   const auto COLORVAL = g_pOmarchyFloatingGlobalState->config.textColor->value();
   const auto SIZE = g_pOmarchyFloatingGlobalState->config.barTextSize->value();
@@ -414,7 +465,7 @@ void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const f
   const auto scaledButtonsSize = buttonSizes * scale;
   const auto scaledBarPadding = BARPADDING * scale;
   const int paddingTotal = scaledBarPadding * 2 + scaledButtonsSize + (ALIGN != "left" ? scaledButtonsSize : 0);
-  const int maxWidth = std::clamp(static_cast<int>(bufferSize.x - paddingTotal), 0, INT_MAX);
+  const int maxWidth = std::clamp(static_cast<int>(bufferSize.x - paddingTotal - iconSpace(scale)), 0, INT_MAX);
 
   if (m_szLastTitle.empty() || maxWidth < 1) {
     m_pTextTex = nullptr;
@@ -451,6 +502,11 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
   const auto BUTTONBORDERSIZE = g_pOmarchyFloatingGlobalState->config.buttonBorderSize->value();
   const auto BUTTONBORDERCOLOR = g_pOmarchyFloatingGlobalState->config.buttonBorderColor->value();
 
+  const auto BARCOLOR = configColor(g_pOmarchyFloatingGlobalState->config.barColor->value());
+  const auto sameRGB = [](const CHyprColor &x, const CHyprColor &y) {
+    return std::abs(x.r - y.r) < 0.004 && std::abs(x.g - y.g) < 0.004 && std::abs(x.b - y.b) < 0.004;
+  };
+
   const bool BUTTONSRIGHT = ALIGNBUTTONS != "left";
   const auto visibleCount = getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale);
   const bool INVALIDATEICONS = m_bButtonsDirty || m_bWindowSizeChanged;
@@ -468,6 +524,12 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
       if (INVALIDATEICONS && button.userfg)
         button.iconTex.clear();
     }
+
+    // Buttons painted in the bar's own colour are meant to blend into it. A
+    // window whose bar takes another colour from a bar_color rule takes these
+    // buttons along, or they would show as squares of the default colour.
+    if (m_bForcedBarColor && sameRGB(button.bgcol, BARCOLOR))
+      color = m_cRealBarColor->value();
 
     color.a *= a;
 
@@ -677,8 +739,23 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
   // The title is rendered at the monitor's scale. A window dragged between
   // monitors of different scales is drawn on each, so one texture is kept per
   // scale; otherwise the title shows at the other monitor's size.
+  const auto ICONENABLED = g_pOmarchyFloatingGlobalState->config.barIconEnabled->value();
+  const std::string iconPath = ICONENABLED ? omarchyAppIcon(PWINDOW->metadata().appID()) : "";
+  if (iconPath != m_szLastIconPath) {
+    m_szLastIconPath = iconPath;
+    m_iconTexByScale.clear();
+    m_titleTexByScale.clear();
+  }
   if (m_szLastTitle != title || m_bWindowSizeChanged || m_bTitleColorChanged)
     m_titleTexByScale.clear();
+  SP<Render::ITexture> iconTex;
+  if (ENABLETITLE && !m_szLastIconPath.empty()) {
+    const int px = std::round(iconSize() * pMonitor->m_scale);
+    auto &tex = m_iconTexByScale[px];
+    if (!tex || tex->m_texID == 0)
+      tex = renderBarIcon(px);
+    iconTex = tex;
+  }
   if (ENABLETITLE) {
     m_szLastTitle = title;
     auto &tex = m_titleTexByScale[static_cast<int>(std::round(pMonitor->m_scale * 100))];
@@ -712,10 +789,19 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     const auto scaledBorderSize = PWINDOW->presentation().borderSize() * pMonitor->m_scale;
     const auto scaledButtonsSize = buttonSizes * pMonitor->m_scale;
     const auto scaledBarPadding = BARPADDING * pMonitor->m_scale;
+    // The icon leads the title; centred titles centre the two together.
+    const auto ICONSPACE = iconTex ? iconSpace(pMonitor->m_scale) : 0.F;
     const auto xOffset = ALIGN == "left" ? std::round(scaledBarPadding + (BUTTONSRIGHT ? 0 : scaledButtonsSize))
-                                         : std::round(((BARBUF.x - scaledBorderSize) / 2.0 - m_pTextTex->m_size.x / 2.0));
+                                         : std::round(((BARBUF.x - scaledBorderSize) / 2.0 - (m_pTextTex->m_size.x + ICONSPACE) / 2.0));
     const auto yOffset = std::round((BARBUF.y - m_pTextTex->m_size.y) / 2.0);
-    CBox titleBox = {textBox.x + xOffset, textBox.y + yOffset, m_pTextTex->m_size.x, m_pTextTex->m_size.y};
+
+    if (iconTex) {
+      CBox iconBox = {textBox.x + xOffset, textBox.y + std::round((BARBUF.y - iconTex->m_size.y) / 2.0), iconTex->m_size.x, iconTex->m_size.y};
+      iconBox.round();
+      g_pHyprOpenGL->renderTexture(ctx, iconTex, iconBox, {.a = a});
+    }
+
+    CBox titleBox = {textBox.x + xOffset + ICONSPACE, textBox.y + yOffset, m_pTextTex->m_size.x, m_pTextTex->m_size.y};
 
     g_pHyprOpenGL->renderTexture(ctx, m_pTextTex, titleBox, {.a = a});
   }
