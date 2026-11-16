@@ -70,8 +70,10 @@ private:
   // it changes.
   SAppIcon m_lastIcon;
   bool m_bIconFailed = false;
-  // Off while the bar is too narrow for the icon beside its buttons.
+  // Off while the bar is too narrow for the icon beside its buttons, at the
+  // scale being drawn; m_iconFitsByScale keeps the fit of each scale.
   bool m_bIconFits = true;
+  std::map<int, bool> m_iconFitsByScale;
   std::map<int, SP<Render::ITexture>> m_iconTexByScale;
 
   bool m_bWindowSizeChanged = false;

@@ -741,11 +741,16 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     m_titleTexByScale.clear();
   }
   // Like the title, the icon is left out when it has no room beside the buttons.
-  const bool ICONFITS = titleRoom(BARBUF, pMonitor->m_scale) >= iconPixels(pMonitor->m_scale) + static_cast<int>(std::round(6 * pMonitor->m_scale));
-  if (ICONFITS != m_bIconFits) {
-    m_bIconFits = ICONFITS;
-    m_titleTexByScale.clear();
+  // Rounding can let it fit at one monitor scale and not another, so the fit is
+  // kept per scale, and a change refits only that scale's title.
+  const int SCALEKEY = static_cast<int>(std::round(pMonitor->m_scale * 100));
+  const bool ICONFITS = !g_pOmarchyFloatingGlobalState->config.barIcon->value() ||
+      titleRoom(BARBUF, pMonitor->m_scale) >= iconPixels(pMonitor->m_scale) + static_cast<int>(std::round(6 * pMonitor->m_scale));
+  if (const auto [fit, added] = m_iconFitsByScale.try_emplace(SCALEKEY, ICONFITS); !added && fit->second != ICONFITS) {
+    fit->second = ICONFITS;
+    m_titleTexByScale.erase(SCALEKEY);
   }
+  m_bIconFits = ICONFITS;
   SP<Render::ITexture> iconTex;
   if (hasIcon()) {
     auto &tex = m_iconTexByScale[iconPixels(pMonitor->m_scale)];
@@ -766,7 +771,7 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     m_titleTexByScale.clear();
   if (ENABLETITLE) {
     m_szLastTitle = title;
-    auto &tex = m_titleTexByScale[static_cast<int>(std::round(pMonitor->m_scale * 100))];
+    auto &tex = m_titleTexByScale[SCALEKEY];
     if (!tex || tex->m_texID == 0) {
       renderBarTitle(BARBUF, pMonitor->m_scale);
       tex = m_pTextTex;
