@@ -25,11 +25,18 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | `enabled` | false | Upstream defaults to true. Off here, so a plugin left loaded after the config stops configuring it draws nothing. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
 | `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
+| `bar_icon` | true | Draw the app's icon before the title. |
 
 ## Titles
 
 A titlebar shows the name of the app the window belongs to, when a desktop entry claims the window's class through `StartupWMClass` or its file name, and the window's own title otherwise. A web app titles its window with its page or just its domain, so this is what keeps `web.whatsapp.com` reading WhatsApp. Entries are read from `$XDG_DATA_HOME/applications` and then `$XDG_DATA_DIRS`, so a user's own entry wins, and an entry added while Hyprland runs is picked up within a couple of seconds.
 
+
+## Icons
+
+A titlebar shows the app's icon before its title: the `Icon` of the desktop entry that gives the title its app name, or else an icon named after the window's class. A path is used as it is; a name is looked up in the `hicolor` theme under `$XDG_DATA_HOME/icons`, `~/.icons` and `$XDG_DATA_DIRS`, preferring scalable icons and then the largest raster, and then in `/usr/share/pixmaps`. `hicolor` is where apps install their own artwork, and where Omarchy links the icons of the icon set in use, ahead of the packaged ones. The icon is fitted into a square a little taller than the title's text, without stretching.
+
+Omarchy redraws an icon set's files in place when the theme changes, so the next time a titlebar is drawn its icon is reloaded if the file was written, as well as when the window's icon changes; an icon installed after a window opened is found within a couple of seconds. A file that fails to load is skipped until it changes, and the window shows its title alone.
 ## Button hover
 
 A button under the pointer is highlighted in its own icon color at low opacity, so the effect follows any theme without a setting of its own.

@@ -198,6 +198,8 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CBoolValue>("plugin:hyprbars:icon_on_hover", "Whether to use an icon on hover of the buttons", false);
   g_pOmarchyFloatingGlobalState->config.onDoubleClick =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:on_double_click", "Action to execute on double click of the bar", "");
+  g_pOmarchyFloatingGlobalState->config.barIcon =
+      makeShared<Config::Values::CBoolValue>("plugin:hyprbars:bar_icon", "Show the app's icon before the title", true);
   g_pOmarchyFloatingGlobalState->config.workspaceTag =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:workspace_tag", "Restrict bars to windows with this tag", "");
 
@@ -222,6 +224,7 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.enabled);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.workspaceTag);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barIcon);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.iconOnHover);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.onDoubleClick);
 
