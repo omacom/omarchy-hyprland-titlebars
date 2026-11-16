@@ -399,7 +399,24 @@ bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::
 }
 
 bool COmarchyFloatingHyprBar::hasIcon() const {
-  return g_pOmarchyFloatingGlobalState->config.barIcon->value() && !m_lastIcon.path.empty() && !m_bIconFailed;
+  return g_pOmarchyFloatingGlobalState->config.barIcon->value() && !m_lastIcon.path.empty() && !m_bIconFailed && m_bIconFits;
+}
+
+// Width the title and icon have between the bar's padding and its buttons.
+int COmarchyFloatingHyprBar::titleRoom(const Vector2D &bufferSize, float scale) const {
+  const auto ALIGN = g_pOmarchyFloatingGlobalState->config.barTextAlign->value();
+  const auto BARPADDING = g_pOmarchyFloatingGlobalState->config.barPadding->value();
+  const auto BARBUTTONPADDING = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
+
+  float buttonSizes = BARBUTTONPADDING;
+  for (auto &b : g_pOmarchyFloatingGlobalState->buttons) {
+    buttonSizes += b.size + BARBUTTONPADDING;
+  }
+
+  const auto scaledButtonsSize = buttonSizes * scale;
+  const auto scaledBarPadding = BARPADDING * scale;
+  const int paddingTotal = scaledBarPadding * 2 + scaledButtonsSize + (ALIGN != "left" ? scaledButtonsSize : 0);
+  return static_cast<int>(bufferSize.x - paddingTotal);
 }
 
 // The icon is a little taller than the title's text and stays inside the bar.
@@ -450,20 +467,9 @@ void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const f
   const auto SIZE = g_pOmarchyFloatingGlobalState->config.barTextSize->value();
   const auto WEIGHT = g_pOmarchyFloatingGlobalState->config.barTextWeight->value();
   const auto FONT = g_pOmarchyFloatingGlobalState->config.barTextFont->value();
-  const auto ALIGN = g_pOmarchyFloatingGlobalState->config.barTextAlign->value();
-  const auto BARPADDING = g_pOmarchyFloatingGlobalState->config.barPadding->value();
-  const auto BARBUTTONPADDING = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
-
-  float buttonSizes = BARBUTTONPADDING;
-  for (auto &b : g_pOmarchyFloatingGlobalState->buttons) {
-    buttonSizes += b.size + BARBUTTONPADDING;
-  }
 
   const int scaledSize = std::round(SIZE * scale);
-  const auto scaledButtonsSize = buttonSizes * scale;
-  const auto scaledBarPadding = BARPADDING * scale;
-  const int paddingTotal = scaledBarPadding * 2 + scaledButtonsSize + (ALIGN != "left" ? scaledButtonsSize : 0);
-  const int maxWidth = std::clamp(static_cast<int>(bufferSize.x - paddingTotal - iconSpace(scale)), 0, INT_MAX);
+  const int maxWidth = std::clamp(titleRoom(bufferSize, scale) - iconSpace(scale), 0, INT_MAX);
 
   if (m_szLastTitle.empty() || maxWidth < 1) {
     m_pTextTex = nullptr;
@@ -732,6 +738,12 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     m_lastIcon = ICON;
     m_bIconFailed = false;
     m_iconTexByScale.clear();
+    m_titleTexByScale.clear();
+  }
+  // Like the title, the icon is left out when it has no room beside the buttons.
+  const bool ICONFITS = titleRoom(BARBUF, pMonitor->m_scale) >= iconPixels(pMonitor->m_scale) + static_cast<int>(std::round(6 * pMonitor->m_scale));
+  if (ICONFITS != m_bIconFits) {
+    m_bIconFits = ICONFITS;
     m_titleTexByScale.clear();
   }
   SP<Render::ITexture> iconTex;

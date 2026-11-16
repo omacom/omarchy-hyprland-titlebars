@@ -20,6 +20,7 @@ namespace {
   std::vector<SEntry>                          g_entries;
   std::unordered_map<std::string, SEntry>      g_resolved;
   std::unordered_map<std::string, SAppIcon>    g_icons;
+  std::vector<fs::file_time_type>              g_iconDirStamps;
   std::vector<fs::file_time_type>              g_stamps;
   std::chrono::steady_clock::time_point        g_lastCheck;
   bool                                         g_loaded = false;
@@ -120,10 +121,28 @@ namespace {
     return ec ? 0 : static_cast<long long>(time.time_since_epoch().count());
   }
 
-  // Rescans the desktop entries when their directories change, and restamps the
-  // icons found so far, at most every couple of seconds. Icons that were not
-  // found are looked up again, so artwork installed after a window opened
-  // still reaches its titlebar.
+  std::vector<fs::path> hicolorDirs();
+
+  // A link added to or removed from an icon directory moves its time, as when
+  // Omarchy switches to another icon set or back to the packaged icons.
+  std::vector<fs::file_time_type> iconDirStamps() {
+    std::vector<fs::path> dirs;
+    for (const auto& theme : hicolorDirs()) {
+      dirs.push_back(theme);
+      std::error_code ec;
+      for (const auto& size : fs::directory_iterator(theme, ec))
+        if (size.is_directory(ec))
+          dirs.push_back(size.path() / "apps");
+    }
+    dirs.emplace_back("/usr/share/pixmaps");
+    return stamps(dirs);
+  }
+
+  // Rescans the desktop entries when their directories change, at most every
+  // couple of seconds. Icons are looked up again when an icon directory
+  // changes, and otherwise restamped, so an icon redrawn in place reloads.
+  // Icons that were not found are looked up again too, so artwork installed
+  // after a window opened still reaches its titlebar.
   void refresh() {
     const auto now = std::chrono::steady_clock::now();
     if (g_loaded && now - g_lastCheck <= std::chrono::seconds(2))
@@ -136,6 +155,13 @@ namespace {
       load(dirs);
       g_stamps = std::move(times);
       g_loaded = true;
+    }
+
+    auto iconTimes = iconDirStamps();
+    if (iconTimes != g_iconDirStamps) {
+      g_icons.clear();
+      g_iconDirStamps = std::move(iconTimes);
+      return;
     }
 
     std::erase_if(g_icons, [](const auto& icon) { return icon.second.path.empty(); });
@@ -230,12 +256,21 @@ namespace {
     if (icon.find('/') != std::string::npos)
       return "";
 
+    // The spec wants a bare name, but some entries give the file name.
+    std::string name = icon;
+    for (const auto* ext : {".svg", ".png", ".xpm"}) {
+      if (name.ends_with(ext)) {
+        name.resize(name.size() - 4);
+        break;
+      }
+    }
+
     for (const auto& theme : hicolorDirs())
-      if (auto found = findInTheme(theme, icon); !found.empty())
+      if (auto found = findInTheme(theme, name); !found.empty())
         return found;
 
     for (const auto* ext : {".svg", ".png"}) {
-      const auto candidate = fs::path("/usr/share/pixmaps") / (icon + ext);
+      const auto candidate = fs::path("/usr/share/pixmaps") / (name + ext);
       if (fs::is_regular_file(candidate, ec))
         return candidate.string();
     }

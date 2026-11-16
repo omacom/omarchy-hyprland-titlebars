@@ -70,6 +70,8 @@ private:
   // it changes.
   SAppIcon m_lastIcon;
   bool m_bIconFailed = false;
+  // Off while the bar is too narrow for the icon beside its buttons.
+  bool m_bIconFits = true;
   std::map<int, SP<Render::ITexture>> m_iconTexByScale;
 
   bool m_bWindowSizeChanged = false;
@@ -90,6 +92,7 @@ private:
   void renderBarTitle(const Vector2D &bufferSize, const float scale);
   SP<Render::ITexture> renderBarIcon(int px);
   bool hasIcon() const;
+  int titleRoom(const Vector2D &bufferSize, float scale) const;
   int iconPixels(float scale) const;
   int iconSpace(float scale) const;
   void renderBarButtons(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
