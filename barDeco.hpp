@@ -13,6 +13,7 @@
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/helpers/signal/Signal.hpp>
 #include "globals.hpp"
+#include "appName.hpp"
 
 #define private public
 #include <hyprland/src/managers/input/InputManager.hpp>
@@ -64,6 +65,16 @@ private:
   SP<Render::ITexture> m_pTextTex;
   // Title textures keyed by monitor scale x100; see renderPass().
   std::map<int, SP<Render::ITexture>> m_titleTexByScale;
+  // The app icon drawn before the title, likewise one texture per scale, keyed
+  // by its size in pixels. A file that fails to load is not tried again until
+  // it changes.
+  SAppIcon m_lastIcon;
+  bool m_bIconFailed = false;
+  // Off while the bar is too narrow for the icon beside its buttons, at the
+  // scale being drawn; m_iconFitsByScale keeps the fit of each scale.
+  bool m_bIconFits = true;
+  std::map<int, bool> m_iconFitsByScale;
+  std::map<int, SP<Render::ITexture>> m_iconTexByScale;
 
   bool m_bWindowSizeChanged = false;
   bool m_hidden = false;
@@ -81,6 +92,11 @@ private:
 
   void renderPass(Render::CRenderContext &ctx, PHLMONITOR, float const &a);
   void renderBarTitle(const Vector2D &bufferSize, const float scale);
+  SP<Render::ITexture> renderBarIcon(int px);
+  bool hasIcon() const;
+  int titleRoom(const Vector2D &bufferSize, float scale) const;
+  int iconPixels(float scale) const;
+  int iconSpace(float scale) const;
   void renderBarButtons(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
   void renderBarButtonsText(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
   void damageOnButtonHover();
