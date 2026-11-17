@@ -83,9 +83,8 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
   // move events
   m_pTouchMoveCallback = Event::bus()->m_events.input.touch.motion.listen([&](ITouch::SMotionEvent e, Event::SCallbackInfo &info) { onTouchMove(info, e); });
   m_pMouseMoveCallback = Event::bus()->m_events.input.mouse.move.listen([&](Vector2D c, Event::SCallbackInfo &info) { onMouseMove(c); });
-  if (!pWindow->backend().isX11())
-    m_pWindowStateCallback = pWindow->backend().m_events.stateRequest.listen(
-        [this](const Desktop::View::SBackendStateRequest &request) { onClientStateRequest(request); });
+  if (const auto toplevel = clientToplevel(pWindow))
+    m_pWindowStateCallback = toplevel->m_events.stateChanged.listen([this] { onClientStateRequest(); });
 
   Animation::mgr()->createAnimation(configColor(g_pOmarchyFloatingGlobalState->config.barColor->value()), m_cRealBarColor,
                                     Config::animationTree()->getAnimationPropertyConfig("border"), pWindow, AVARDAMAGE_NONE);
@@ -833,21 +832,24 @@ void COmarchyFloatingHyprBar::syncClientMaximizedState() {
       Fullscreen::controller()->getFullscreenModes(window).client == Fullscreen::FSMODE_MAXIMIZED);
 }
 
-void COmarchyFloatingHyprBar::onClientStateRequest(const Desktop::View::SBackendStateRequest &request) {
+void COmarchyFloatingHyprBar::onClientStateRequest() {
   if (!clientControlsApply())
     return;
   const auto window = m_pWindow.lock();
+  // The backend rewrites maximize requests into toggles for the forced-CSD
+  // policy. This frameless contract needs the original explicit request.
+  const auto &request = clientToplevel(window)->m_state;
   // The compositor already handled requests which were not suppressed.
-  if (request.maximized.has_value() && window->fullscreenPolicy().requestSuppression().maximize) {
-    if (!window->fullscreenPolicy().consumeExpectedMaximizeEcho(*request.maximized)) {
+  if (request.requestsMaximize.has_value() && window->fullscreenPolicy().requestSuppression().maximize) {
+    if (!window->fullscreenPolicy().consumeExpectedMaximizeEcho(*request.requestsMaximize)) {
       const auto mode = Fullscreen::controller()->getFullscreenModes(window).client;
-      if (*request.maximized && mode == Fullscreen::FSMODE_NONE)
+      if (*request.requestsMaximize && mode == Fullscreen::FSMODE_NONE)
         Fullscreen::controller()->setFullscreenMode(window, std::nullopt, Fullscreen::FSMODE_MAXIMIZED);
-      else if (!*request.maximized && mode == Fullscreen::FSMODE_MAXIMIZED)
+      else if (!*request.requestsMaximize && mode == Fullscreen::FSMODE_MAXIMIZED)
         Fullscreen::controller()->setFullscreenMode(window, std::nullopt, Fullscreen::FSMODE_NONE);
     }
   }
-  if (request.minimized.value_or(false)) {
+  if (request.requestsMinimize.value_or(false)) {
     const auto command = g_pOmarchyFloatingGlobalState->config.onMinimize->value();
     if (!command.empty())
       Config::Supplementary::executor()->spawn(windowCommand(command, window));

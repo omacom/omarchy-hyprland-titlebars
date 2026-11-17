@@ -1,7 +1,5 @@
 #pragma once
 
-namespace Desktop::View { struct SBackendStateRequest; }
-
 #define WLR_USE_UNSTABLE
 
 #include <map>
@@ -113,7 +111,7 @@ private:
 
   bool clientControlsApply() const;
   void syncClientMaximizedState();
-  void onClientStateRequest(const Desktop::View::SBackendStateRequest &request);
+  void onClientStateRequest();
 
   std::string m_szLastTitle;
 
