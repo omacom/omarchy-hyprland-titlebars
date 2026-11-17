@@ -8,7 +8,7 @@ project(omarchy-hyprland-titlebars
 
 set(CMAKE_CXX_STANDARD 23)
 
-set(SRC main.cpp barDeco.cpp BarPassElement.cpp appName.cpp)
+set(SRC main.cpp barDeco.cpp BarPassElement.cpp appName.cpp DragTracker.cpp)
 
 # Built as titlebars.so (no lib prefix). Omarchy loads it from the fixed path
 # /usr/lib/omarchy-hyprland-titlebars/titlebars.so. The Hyprland-facing plugin
