@@ -1,5 +1,7 @@
 #pragma once
 
+namespace Desktop::View { struct SBackendStateRequest; }
+
 #define WLR_USE_UNSTABLE
 
 #include <map>
@@ -107,6 +109,11 @@ private:
 
   CHyprSignalListener m_pTouchMoveCallback;
   CHyprSignalListener m_pMouseMoveCallback;
+  CHyprSignalListener m_pWindowStateCallback;
+
+  bool clientControlsApply() const;
+  void syncClientMaximizedState();
+  void onClientStateRequest(const Desktop::View::SBackendStateRequest &request);
 
   std::string m_szLastTitle;
 

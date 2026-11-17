@@ -14,10 +14,11 @@ namespace fs = std::filesystem;
 namespace {
   struct SEntry {
     std::string id, name, wmClass;
+    bool clientControls = false;
   };
 
   std::vector<SEntry>                          g_entries;
-  std::unordered_map<std::string, std::string> g_resolved;
+  std::unordered_map<std::string, SEntry> g_resolved;
   std::vector<fs::file_time_type>              g_stamps;
   std::chrono::steady_clock::time_point        g_lastCheck;
   bool                                         g_loaded = false;
@@ -76,6 +77,8 @@ namespace {
         entry.name = line.substr(5);
       else if (line.starts_with("StartupWMClass="))
         entry.wmClass = line.substr(15);
+      else if (line.starts_with("X-Omarchy-ClientControls="))
+        entry.clientControls = line == "X-Omarchy-ClientControls=true";
     }
 
     return entry;
@@ -103,44 +106,51 @@ namespace {
     std::ranges::transform(text, text.begin(), [](unsigned char c) { return std::tolower(c); });
     return text;
   }
-}
+  const SEntry& resolveEntry(const std::string& windowClass) {
+    static const SEntry empty;
+    if (windowClass.empty())
+      return empty;
 
-std::string omarchyAppName(const std::string& windowClass) {
-  if (windowClass.empty())
-    return "";
-
-  const auto now = std::chrono::steady_clock::now();
-  if (!g_loaded || now - g_lastCheck > std::chrono::seconds(2)) {
-    g_lastCheck      = now;
-    const auto dirs  = applicationDirs();
-    auto       times = stamps(dirs);
-    if (!g_loaded || times != g_stamps) {
-      load(dirs);
-      g_stamps = std::move(times);
-      g_loaded = true;
+    const auto now = std::chrono::steady_clock::now();
+    if (!g_loaded || now - g_lastCheck > std::chrono::seconds(2)) {
+      g_lastCheck      = now;
+      const auto dirs  = applicationDirs();
+      auto       times = stamps(dirs);
+      if (!g_loaded || times != g_stamps) {
+        load(dirs);
+        g_stamps = std::move(times);
+        g_loaded = true;
+      }
     }
-  }
 
-  if (const auto cached = g_resolved.find(windowClass); cached != g_resolved.end())
-    return cached->second;
+    if (const auto cached = g_resolved.find(windowClass); cached != g_resolved.end())
+      return cached->second;
 
-  std::string name;
-  for (const auto& entry : g_entries) {
-    if (entry.wmClass == windowClass) {
-      name = entry.name;
-      break;
-    }
-  }
-  if (name.empty()) {
-    const auto wanted = lower(windowClass);
+    SEntry result;
     for (const auto& entry : g_entries) {
-      if (lower(entry.id) == wanted) {
-        name = entry.name;
+      if (entry.wmClass == windowClass) {
+        result = entry;
         break;
       }
     }
-  }
+    if (result.name.empty()) {
+      const auto wanted = lower(windowClass);
+      for (const auto& entry : g_entries) {
+        if (lower(entry.id) == wanted) {
+          result = entry;
+          break;
+        }
+      }
+    }
 
-  g_resolved[windowClass] = name;
-  return name;
+    return g_resolved.emplace(windowClass, std::move(result)).first->second;
+  }
+}
+
+std::string omarchyAppName(const std::string& windowClass) {
+  return resolveEntry(windowClass).name;
+}
+
+bool omarchyAppHasClientControls(const std::string& windowClass) {
+  return resolveEntry(windowClass).clientControls;
 }
