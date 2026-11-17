@@ -23,6 +23,11 @@
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
+#include <hyprland/src/desktop/view/window/WindowBackend.hpp>
+#include <hyprland/src/desktop/view/window/WindowMetadata.hpp>
+#include <hyprland/src/desktop/view/window/WindowFullscreenPolicy.hpp>
+#include <hyprland/src/protocols/XDGShell.hpp>
+#include <hyprland/src/protocols/core/Compositor.hpp>
 
 #include "globals.hpp"
 #include "BarPassElement.hpp"
@@ -35,6 +40,20 @@
 using namespace Render::GL;
 
 static CHyprColor configColor(Config::INTEGER color) { return CHyprColor{static_cast<uint64_t>(color)}; }
+
+static SP<CXDGToplevelResource> clientToplevel(const PHLWINDOW &window) {
+  const auto surface = window->backend().surface();
+  if (!surface || !surface->m_role || surface->m_role->role() != SURFACE_ROLE_XDG_SHELL)
+    return nullptr;
+  const auto role = dynamicPointerCast<CXDGSurfaceRole>(surface->m_role);
+  const auto xdg = role ? role->m_xdgSurface.lock() : nullptr;
+  return xdg ? xdg->m_toplevel.lock() : nullptr;
+}
+
+static bool appOwnsControls(const PHLWINDOW &window) {
+  return !window->backend().isX11() && clientToplevel(window) && !window->backend().traits().modal && !window->backend().parent() &&
+         !window->backend().traits().transient && omarchyAppHasClientControls(window->metadata().appID());
+}
 
 static std::string windowCommand(std::string command, const PHLWINDOW &window) {
   // Resolve the decoration owner synchronously. An asynchronously spawned
@@ -64,6 +83,8 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
   // move events
   m_pTouchMoveCallback = Event::bus()->m_events.input.touch.motion.listen([&](ITouch::SMotionEvent e, Event::SCallbackInfo &info) { onTouchMove(info, e); });
   m_pMouseMoveCallback = Event::bus()->m_events.input.mouse.move.listen([&](Vector2D c, Event::SCallbackInfo &info) { onMouseMove(c); });
+  if (const auto toplevel = clientToplevel(pWindow))
+    m_pWindowStateCallback = toplevel->m_events.stateChanged.listen([this] { onClientStateRequest(); });
 
   Animation::mgr()->createAnimation(configColor(g_pOmarchyFloatingGlobalState->config.barColor->value()), m_cRealBarColor,
                                     Config::animationTree()->getAnimationPropertyConfig("border"), pWindow, AVARDAMAGE_NONE);
@@ -790,6 +811,51 @@ CBox COmarchyFloatingHyprBar::assignedBoxGlobal() {
 
 PHLWINDOW COmarchyFloatingHyprBar::getOwner() { return m_pWindow.lock(); }
 
+bool COmarchyFloatingHyprBar::clientControlsApply() const {
+  const auto window = m_pWindow.lock();
+  if (!window || !window->mapped() || !window->isFloating() ||
+      !g_pOmarchyFloatingGlobalState->config.enabled->value())
+    return false;
+  const auto tag = g_pOmarchyFloatingGlobalState->config.workspaceTag->value();
+  return (tag.empty() || window->m_ruleApplicator->m_tagKeeper.isTagged(tag)) && appOwnsControls(window);
+}
+
+void COmarchyFloatingHyprBar::syncClientMaximizedState() {
+  if (!clientControlsApply())
+    return;
+  const auto window = m_pWindow.lock();
+  // Hyprland 0.56 marks every initial toplevel maximized to suppress CSD.
+  // A client drawing its own controls needs the actual state instead.
+  // The backend's setMaximized deliberately does nothing for Wayland CSD.
+  // This opt-in contract is restricted to apps that are already frameless.
+  clientToplevel(window)->setMaximized(
+      Fullscreen::controller()->getFullscreenModes(window).client == Fullscreen::FSMODE_MAXIMIZED);
+}
+
+void COmarchyFloatingHyprBar::onClientStateRequest() {
+  if (!clientControlsApply())
+    return;
+  const auto window = m_pWindow.lock();
+  // The backend rewrites maximize requests into toggles for the forced-CSD
+  // policy. This frameless contract needs the original explicit request.
+  const auto &request = clientToplevel(window)->m_state;
+  // The compositor already handled requests which were not suppressed.
+  if (request.requestsMaximize.has_value() && window->fullscreenPolicy().requestSuppression().maximize) {
+    if (!window->fullscreenPolicy().consumeExpectedMaximizeEcho(*request.requestsMaximize)) {
+      const auto mode = Fullscreen::controller()->getFullscreenModes(window).client;
+      if (*request.requestsMaximize && mode == Fullscreen::FSMODE_NONE)
+        Fullscreen::controller()->setFullscreenMode(window, std::nullopt, Fullscreen::FSMODE_MAXIMIZED);
+      else if (!*request.requestsMaximize && mode == Fullscreen::FSMODE_MAXIMIZED)
+        Fullscreen::controller()->setFullscreenMode(window, std::nullopt, Fullscreen::FSMODE_NONE);
+    }
+  }
+  if (request.requestsMinimize.value_or(false)) {
+    const auto command = g_pOmarchyFloatingGlobalState->config.onMinimize->value();
+    if (!command.empty())
+      Config::Supplementary::executor()->spawn(windowCommand(command, window));
+  }
+}
+
 void COmarchyFloatingHyprBar::updateRules() {
   const auto PWINDOW = m_pWindow.lock();
   if (!PWINDOW)
@@ -806,6 +872,9 @@ void COmarchyFloatingHyprBar::updateRules() {
   const auto workspaceTag = g_pOmarchyFloatingGlobalState->config.workspaceTag->value();
   if (!workspaceTag.empty())
     m_hidden = m_hidden || !PWINDOW->isFloating() || !PWINDOW->m_ruleApplicator->m_tagKeeper.isTagged(workspaceTag);
+  if (appOwnsControls(PWINDOW))
+    m_hidden = true;
+  syncClientMaximizedState();
   if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pOmarchyFloatingGlobalState->barColorRuleIdx))
     m_bForcedBarColor = CHyprColor(
         Config::ParserUtils::parseColor(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pOmarchyFloatingGlobalState->barColorRuleIdx)->effect).value_or(0));

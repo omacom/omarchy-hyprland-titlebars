@@ -107,6 +107,11 @@ private:
 
   CHyprSignalListener m_pTouchMoveCallback;
   CHyprSignalListener m_pMouseMoveCallback;
+  CHyprSignalListener m_pWindowStateCallback;
+
+  bool clientControlsApply() const;
+  void syncClientMaximizedState();
+  void onClientStateRequest();
 
   std::string m_szLastTitle;
 

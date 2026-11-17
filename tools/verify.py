@@ -9,6 +9,7 @@ import os
 import re
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -20,10 +21,24 @@ args = parser.parse_args()
 args.library = args.library.resolve()
 if not args.library.is_file():
   parser.error(f'{args.library} does not exist')
+
+# Probe the same interpreter used for the GTK fixture before compiling the
+# pointer helper or starting a compositor. A missing binding/typelib otherwise
+# looks like a client that simply failed to map.
+gtk_probe = subprocess.run(
+    [sys.executable, '-c', "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import GLib, Gtk"],
+    capture_output=True, text=True)
+if gtk_probe.returncode:
+  parser.error('The GTK fixture requires PyGObject and GTK 3 introspection data '
+               f'for {sys.executable}:\n{gtk_probe.stderr.strip()}')
 args.artifacts.mkdir(parents=True, exist_ok=True)
 
 with tempfile.TemporaryDirectory(prefix='oht-') as scratch:
   scratch = Path(scratch)
+  applications = scratch / 'data/applications'
+  applications.mkdir(parents=True)
+  (applications / 'omarchy-client-controls.desktop').write_text(
+      '[Desktop Entry]\nName=Client controls fixture\nStartupWMClass=omarchy-client-controls\nX-Omarchy-ClientControls=true\n')
   for kind, target in [('client-header', 'pointer-protocol.h'), ('private-code', 'pointer-protocol.c')]:
     subprocess.run(['wayland-scanner', kind, str(source / 'wlr-virtual-pointer-unstable-v1.xml'), str(scratch / target)], check=True)
   subprocess.run(['cc', str(source / 'pointer.c'), str(scratch / 'pointer-protocol.c'), '-I', str(scratch), '-lwayland-client', '-o', str(scratch / 'pointer')], check=True)
@@ -49,12 +64,14 @@ end
     raise RuntimeError('Verification expects exactly one parent compositor')
   parent_signature = parent_instances[0]['instance']
   parent_display = str(Path(os.environ['XDG_RUNTIME_DIR']) / parent_instances[0]['wl_socket'])
-  env = dict(os.environ, XDG_RUNTIME_DIR=str(scratch), AQ_BACKEND='wayland', WAYLAND_DISPLAY=parent_display, HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_SD_VARS='1')
+  env = dict(os.environ, XDG_RUNTIME_DIR=str(scratch), XDG_DATA_HOME=str(scratch / 'data'), AQ_BACKEND='wayland', WAYLAND_DISPLAY=parent_display, HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_SD_VARS='1')
   env.pop('HYPRLAND_INSTANCE_SIGNATURE', None)
   log = (args.artifacts / 'compositor.log').open('w')
   compositor = subprocess.Popen(['Hyprland', '--config', str(config)], env=env, stdout=log, stderr=log)
   terminal = None
   secondary = None
+  gtk_client = None
+  csd_terminal = None
 
   def ctl(*argv):
     # Never let a plugin command reach the parent compositor.
@@ -104,7 +121,14 @@ end
       time.sleep(.1)
     else:
       raise RuntimeError('Isolated compositor did not start')
-    time.sleep(.2)
+    # The socket is ready before the nested Wayland output is necessarily
+    # advertised. foot exits immediately if it connects during that interval.
+    for _ in range(80):
+      if json.loads(ctl('monitors', '-j')):
+        break
+      time.sleep(.1)
+    else:
+      raise RuntimeError('Isolated compositor did not advertise a monitor')
     terminal = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-isolated-test', '--title=Titlebars — isolated verification', 'sleep', '90'], env=env, stdout=log, stderr=log)
     for _ in range(60):
       if json.loads(ctl('clients', '-j')):
@@ -130,7 +154,7 @@ end
       ctl('plugin', 'unload', str(library))
       time.sleep(.15)
       assert not json.loads(ctl('plugin', 'list', '-j'))
-    print('PASS: repeated load/reload/unload, interleaved with the XP fork', flush=True)
+    print('PASS: repeated load/reload/unload' + (', interleaved with the XP fork' if xp.exists() else '; XP fork unavailable'), flush=True)
 
     # Hyprland keeps a plugin loaded after the config stops asking for it, and
     # puts its options back to their defaults, so an unconfigured bar must
@@ -295,7 +319,100 @@ end
     assert client()['at'][1] < 30, client()
     capture('workspace-untagged-no-titlebar')
     print('PASS: workspace-scoped titlebars release space immediately when tiled or untagged', flush=True)
+
+    # A frameless app declares its own controls in the installed desktop entry.
+    # Exercise real GTK requests under Omarchy's maximize suppression.
+    command_file, state_file = scratch / 'client-command.json', scratch / 'client-state.json'
+    ctl('eval', 'hl.window_rule({ name = "suppress-client-maximize", match = { class = "omarchy-client-controls" }, suppress_event = "maximize" })')
+    gtk_client = subprocess.Popen([sys.executable, str(source / 'gtk-client.py'), str(command_file), str(state_file)],
+                                  env=dict(env, GDK_BACKEND='wayland'), stdout=log, stderr=log)
+    for _ in range(60):
+      windows = json.loads(ctl('clients', '-j'))
+      native = next((window for window in windows if window['pid'] == gtk_client.pid), None)
+      if native and state_file.exists():
+        break
+      time.sleep(.1)
+    assert native and state_file.exists(), 'GTK client did not map'
+    native_address = native['address']
+    ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+floating-test", window = "address:{native_address}" }})')
+    time.sleep(.4)
+    capture('client-decorations-initial')
+    assert not json.loads(state_file.read_text())['maximized'], state_file.read_text()
+
+    sequence = [0]
+    def request(action, settle=.35):
+      sequence[0] += 1
+      pending = command_file.with_suffix('.tmp')
+      pending.write_text(json.dumps({'sequence': sequence[0], 'action': action}))
+      pending.replace(command_file)
+      time.sleep(settle)
+
+    def native_window():
+      return next(window for window in json.loads(ctl('clients', '-j')) if window['address'] == native_address)
+
+    request('maximize')
+    assert native_window()['fullscreen'] == 1, native_window()
+    assert native_window()['at'][1] < 30, native_window()
+    capture('client-decorations-single-header')
+    request('maximize')
+    assert native_window()['fullscreen'] == 1, native_window()
+    request('restore')
+    assert native_window()['fullscreen'] == 0, native_window()
+
+    request('dialog')
+    dialog = next(window for window in json.loads(ctl('clients', '-j'))
+                  if window['pid'] == gtk_client.pid and window['address'] != native_address)
+    ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+floating-test", window = "address:{dialog["address"]}" }})')
+    ctl('dispatch', f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "set", window = "address:{dialog["address"]}" }})')
+    time.sleep(.3)
+    dialog = next(window for window in json.loads(ctl('clients', '-j')) if window['address'] == dialog['address'])
+    assert dialog['at'][1] >= 30, dialog
+    capture('transient-retains-caption')
+    request('close-dialog')
+    request('restore')
+    assert native_window()['fullscreen'] == 0, native_window()
+
+    # Untagged windows remain subject to the compositor's normal policy.
+    ctl('dispatch', f'hl.dsp.window.tag({{ tag = "-floating-test", window = "address:{native_address}" }})')
+    request('maximize')
+    assert native_window()['fullscreen'] == 0, native_window()
+    ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+floating-test", window = "address:{native_address}" }})')
+    minimize = '''sleep 0.25; hyprctl dispatch 'hl.dsp.window.move({ workspace = "special:client-minimized", follow = false, window = "address:%WINDOW%" })' '''
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { on_minimize = ' + json.dumps(minimize) + ' } } })')
+    request('minimize', settle=.05)
+    ctl('dispatch', f'hl.dsp.focus({{ window = "address:{second_address}" }})')
+    time.sleep(.4)
+    assert native_window()['workspace']['name'] == 'special:client-minimized', native_window()
+    other = next(window for window in json.loads(ctl('clients', '-j')) if window['address'] == second_address)
+    assert other['workspace']['name'] != 'special:client-minimized', other
+
+    # A normal xdg-decoration client keeps the existing server-decoration policy.
+    csd_log = args.artifacts / 'xdg-client.log'
+    with csd_log.open('w') as stream:
+      csd_terminal = subprocess.Popen(['foot', '-o', 'csd.preferred=client', '--app-id=omarchy-xdg-client',
+                                       '--title=Negotiated client caption', 'sleep', '90'],
+                                      env=dict(env, WAYLAND_DEBUG='client'), stdout=log, stderr=stream)
+    for _ in range(60):
+      csd = next((window for window in json.loads(ctl('clients', '-j')) if window['pid'] == csd_terminal.pid), None)
+      if csd:
+        break
+      time.sleep(.1)
+    assert csd, 'xdg-decoration client did not map'
+    ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+floating-test", window = "address:{csd["address"]}" }})')
+    time.sleep(.4)
+    assert re.search(r'zxdg_toplevel_decoration_v1.*configure\(2\)', csd_log.read_text()), 'Server decoration mode was not preserved'
+    capture('xdg-client-server-policy')
+    ctl('plugin', 'unload', str(args.library))
+    request('restore')
+    assert compositor.poll() is None
+    print('PASS: declared frameless controls, truthful state, maximize/restore and targeted minimize; transient, untagged and toolkit policies preserved', flush=True)
   finally:
+    if csd_terminal and csd_terminal.poll() is None:
+      csd_terminal.terminate()
+      csd_terminal.wait(timeout=5)
+    if gtk_client and gtk_client.poll() is None:
+      gtk_client.terminate()
+      gtk_client.wait(timeout=5)
     if secondary and secondary.poll() is None:
       secondary.terminate()
       secondary.wait(timeout=5)

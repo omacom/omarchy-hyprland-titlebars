@@ -25,6 +25,15 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | `enabled` | false | Upstream defaults to true. Off here, so a plugin left loaded after the config stops configuring it draws nothing. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
 | `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
+| `on_minimize` | empty | Command for declared client-control windows' minimize requests, with `%WINDOW%` resolved before spawning. Omarchy supplies `omarchy-hyprland-window-minimize %WINDOW%` so the dock can restore the window. |
+
+## App-owned window controls
+
+An app drawing its own caption and window controls inside a frameless GTK/Wayland window can ship `X-Omarchy-ClientControls=true` in its desktop entry. The matching `StartupWMClass` (or desktop filename) uses the same lookup and user-override precedence as app names. No per-user window rule or app-side Hyprland IPC is needed. Other desktops ignore this vendor extension.
+
+For declared apps' main Wayland windows, the plugin hides its extra caption. On enabled floating windows covered by `workspace_tag` (or all floating windows when empty), it advertises the actual maximized state, handles suppressed maximize/restore as explicit states, and routes minimize through `on_minimize`. Transient/modal toolkit dialogs keep their compositor caption. Tiled and untagged windows retain the compositor's control policy. No desktop entry can supply a command: only the trusted compositor configuration selects the minimize helper.
+
+This declaration is for frameless apps that render their own controls, not for toolkit-generated client decorations. Hyprland 0.56 forces initial maximized state and server decorations, and does not support the full CSD geometry path. Requesting CSD over a decoration protocol is therefore insufficient evidence for this opt-in; ordinary GTK/xdg-decoration clients keep their existing behavior.
 
 ## Titles
 
@@ -72,8 +81,11 @@ To release, make a GitHub release tagged `vX.Y.Z` with notes on what changed. om
 
 ```bash
 python3 tools/verify.py build/titlebars.so
+python3 tools/verify-app-entry.py
 ```
 
-The verifier needs a running Hyprland session with exactly one Hyprland instance, plus `foot`, `grim`, `wayland-scanner`, and a C compiler. It starts a disposable nested Hyprland with its own runtime directory and never loads the candidate library into the parent compositor. It checks repeated load/reload/unload, interleaved with the Windows XP fork when `/usr/lib/omarchy-windows-xp/hyprbars.so` is installed, and that a loaded plugin the config no longer configures reserves no titlebar space. It then exercises real pointer titlebar dragging to the screen edges without snapping or losing the titlebar off the top, double-click maximize, and restoring a maximized window by dragging its titlebar. A two-window regression check deliberately delays button and double-click commands and changes focus before they run, to verify that actions keep the clicked window as their target. A final check confirms that `workspace_tag`-scoped titlebars release their space immediately when a window is tiled or untagged.
+The verifier needs a running Hyprland session with exactly one Hyprland instance, plus `foot`, `grim`, `wayland-scanner`, a C compiler, and Python 3 with PyGObject and GTK 3 introspection data. The selected Python interpreter must be able to import `gi` and load `Gtk` version `3.0`, including when running from a virtual environment. The verifier checks those GTK requirements before compiling helpers or starting the nested compositor and uses the same interpreter for its GTK fixture.
+
+It starts a disposable nested Hyprland with its own runtime directory and never loads the candidate library into the parent compositor. It checks repeated load/reload/unload, interleaved with the Windows XP fork when `/usr/lib/omarchy-windows-xp/hyprbars.so` is installed, and that a loaded plugin the config no longer configures reserves no titlebar space. It then exercises real pointer titlebar dragging to the screen edges without snapping or losing the titlebar off the top, double-click maximize, and restoring a maximized window by dragging its titlebar. A two-window regression check deliberately delays button and double-click commands and changes focus before they run, to verify that actions keep the clicked window as their target. A final check confirms that `workspace_tag`-scoped titlebars release their space immediately when a window is tiled or untagged.
 
 Screenshots and logs go to `/tmp/omarchy-hyprland-titlebars-verification` by default; pass `--artifacts DIR` to change it.
