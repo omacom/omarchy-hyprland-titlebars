@@ -26,6 +26,8 @@
 #include <hyprland/src/desktop/view/window/WindowBackend.hpp>
 #include <hyprland/src/desktop/view/window/WindowMetadata.hpp>
 #include <hyprland/src/desktop/view/window/WindowFullscreenPolicy.hpp>
+#include <hyprland/src/protocols/XDGShell.hpp>
+#include <hyprland/src/protocols/core/Compositor.hpp>
 
 #include "globals.hpp"
 #include "BarPassElement.hpp"
@@ -39,8 +41,17 @@ using namespace Render::GL;
 
 static CHyprColor configColor(Config::INTEGER color) { return CHyprColor{static_cast<uint64_t>(color)}; }
 
+static SP<CXDGToplevelResource> clientToplevel(const PHLWINDOW &window) {
+  const auto surface = window->backend().surface();
+  if (!surface || !surface->m_role || surface->m_role->role() != SURFACE_ROLE_XDG_SHELL)
+    return nullptr;
+  const auto role = dynamicPointerCast<CXDGSurfaceRole>(surface->m_role);
+  const auto xdg = role ? role->m_xdgSurface.lock() : nullptr;
+  return xdg ? xdg->m_toplevel.lock() : nullptr;
+}
+
 static bool appOwnsControls(const PHLWINDOW &window) {
-  return !window->backend().isX11() && !window->backend().traits().modal && !window->backend().parent() &&
+  return !window->backend().isX11() && clientToplevel(window) && !window->backend().traits().modal && !window->backend().parent() &&
          !window->backend().traits().transient && omarchyAppHasClientControls(window->metadata().appID());
 }
 
@@ -816,7 +827,9 @@ void COmarchyFloatingHyprBar::syncClientMaximizedState() {
   const auto window = m_pWindow.lock();
   // Hyprland 0.56 marks every initial toplevel maximized to suppress CSD.
   // A client drawing its own controls needs the actual state instead.
-  window->backend().setMaximized(
+  // The backend's setMaximized deliberately does nothing for Wayland CSD.
+  // This opt-in contract is restricted to apps that are already frameless.
+  clientToplevel(window)->setMaximized(
       Fullscreen::controller()->getFullscreenModes(window).client == Fullscreen::FSMODE_MAXIMIZED);
 }
 
