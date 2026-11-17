@@ -143,7 +143,7 @@ end
       ctl('plugin', 'unload', str(library))
       time.sleep(.15)
       assert not json.loads(ctl('plugin', 'list', '-j'))
-    print('PASS: repeated load/reload/unload, interleaved with the XP fork', flush=True)
+    print('PASS: repeated load/reload/unload' + (', interleaved with the XP fork' if xp.exists() else '; XP fork unavailable'), flush=True)
 
     # Hyprland keeps a plugin loaded after the config stops asking for it, and
     # puts its options back to their defaults, so an unconfigured bar must
