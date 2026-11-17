@@ -9,6 +9,7 @@ import os
 import re
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -20,6 +21,16 @@ args = parser.parse_args()
 args.library = args.library.resolve()
 if not args.library.is_file():
   parser.error(f'{args.library} does not exist')
+
+# Probe the same interpreter used for the GTK fixture before compiling the
+# pointer helper or starting a compositor. A missing binding/typelib otherwise
+# looks like a client that simply failed to map.
+gtk_probe = subprocess.run(
+    [sys.executable, '-c', "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import GLib, Gtk"],
+    capture_output=True, text=True)
+if gtk_probe.returncode:
+  parser.error('The GTK fixture requires PyGObject and GTK 3 introspection data '
+               f'for {sys.executable}:\n{gtk_probe.stderr.strip()}')
 args.artifacts.mkdir(parents=True, exist_ok=True)
 
 with tempfile.TemporaryDirectory(prefix='oht-') as scratch:
@@ -313,7 +324,7 @@ end
     # Exercise real GTK requests under Omarchy's maximize suppression.
     command_file, state_file = scratch / 'client-command.json', scratch / 'client-state.json'
     ctl('eval', 'hl.window_rule({ name = "suppress-client-maximize", match = { class = "omarchy-client-controls" }, suppress_event = "maximize" })')
-    gtk_client = subprocess.Popen(['python3', str(source / 'gtk-client.py'), str(command_file), str(state_file)],
+    gtk_client = subprocess.Popen([sys.executable, str(source / 'gtk-client.py'), str(command_file), str(state_file)],
                                   env=dict(env, GDK_BACKEND='wayland'), stdout=log, stderr=log)
     for _ in range(60):
       windows = json.loads(ctl('clients', '-j'))
