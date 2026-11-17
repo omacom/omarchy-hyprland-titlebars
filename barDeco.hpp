@@ -2,6 +2,7 @@
 
 #define WLR_USE_UNSTABLE
 
+#include <map>
 #include <hyprland/src/render/decorations/IHyprWindowDecoration.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/gl/GLTexture.hpp>
@@ -61,6 +62,8 @@ private:
   CBox m_bAssignedBox;
 
   SP<Render::ITexture> m_pTextTex;
+  // Title textures keyed by monitor scale x100; see renderPass().
+  std::map<int, SP<Render::ITexture>> m_titleTexByScale;
 
   bool m_bWindowSizeChanged = false;
   bool m_hidden = false;
@@ -93,6 +96,7 @@ private:
   void handleUpEvent(Event::SCallbackInfo &info);
   bool startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords);
   void handleMovement();
+  void keepTitlebarReachable();
   bool doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, bool BUTTONSRIGHT);
 
   CBox assignedBoxGlobal();

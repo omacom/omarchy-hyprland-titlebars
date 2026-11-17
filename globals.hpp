@@ -1,5 +1,7 @@
 #pragma once
 
+#include <map>
+
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/render/Texture.hpp>
 #include <hyprland/src/config/values/types/BoolValue.hpp>
@@ -17,7 +19,9 @@ struct SOmarchyFloatingHyprButton {
   CHyprColor bgcol = CHyprColor(0, 0, 0, 0);
   float size = 10;
   std::string icon = "";
-  SP<Render::ITexture> iconTex;
+  // Icon textures keyed by monitor scale x100: a window can be drawn on
+  // monitors of different scales in the same frame.
+  std::map<int, SP<Render::ITexture>> iconTex;
 };
 
 class COmarchyFloatingHyprBar;
