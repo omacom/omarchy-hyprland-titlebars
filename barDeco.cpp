@@ -115,7 +115,9 @@ bool COmarchyFloatingHyprBar::inputIsValid() {
   auto focusState = Desktop::focusState();
   auto window = focusState->window();
 
-  if (WINDOWATCURSOR != m_pWindow && m_pWindow != window)
+  // The focused window's bar can sit under another window, and a press there
+  // belongs to that window.
+  if (WINDOWATCURSOR != m_pWindow && (m_pWindow != window || WINDOWATCURSOR))
     return false;
 
   PHLLS foundSurface = nullptr;
@@ -160,7 +162,10 @@ void COmarchyFloatingHyprBar::onTouchDown(Event::SCallbackInfo &info, ITouch::SD
 }
 
 void COmarchyFloatingHyprBar::onTouchUp(Event::SCallbackInfo &info, ITouch::SUpEvent e) {
-  if (!m_bDragPending || !m_bTouchEv || e.touchID != m_touchId)
+  // A tap on a button, or a double tap, leaves no drag pending, and its press
+  // was taken all the same: left armed, the bar would swallow the release of
+  // the next mouse click in the window.
+  if (!m_bTouchEv || e.touchID != m_touchId || !(m_bDragPending || m_bCancelledDown || m_bDraggingThis))
     return;
 
   handleUpEvent(info);
@@ -295,19 +300,23 @@ bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHL
 }
 
 void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
-  if (m_pWindow.lock() != Desktop::focusState()->window())
-    return;
-
+  // Only the bar that took the press gets here, and its window can have lost
+  // focus by the release, as one minimized from its own button has. The
+  // release is still this bar's: left armed, it would swallow the release of
+  // a later click in the window, and the app would see the button held down.
   if (m_bCancelledDown)
     info.cancelled = true;
 
   m_bCancelledDown = false;
 
   if (m_bDraggingThis) {
+    const bool MOVING = !m_bTouchEv && g_layoutManager->dragController()->mode() == MBIND_MOVE;
     g_layoutManager->endDragTarget();
     m_bDraggingThis = false;
     if (m_bTouchEv)
       (void)Config::Actions::floatWindow(Config::Actions::eTogglableAction::TOGGLE_ACTION_DISABLE);
+    else if (MOVING)
+      keepTitlebarReachable();
 
     LOG(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
   }
@@ -339,6 +348,32 @@ void COmarchyFloatingHyprBar::handleMovement() {
   m_bDraggingThis = true;
   LOG(Log::DEBUG, "[hyprbars] Dragging initiated on {:x}", (uintptr_t)m_pWindow.lock().get());
   return;
+}
+
+void COmarchyFloatingHyprBar::keepTitlebarReachable() {
+  // A window dropped with its titlebar under a top bar or off the screen
+  // can't be dragged back, so keep the reserved top (border and titlebar)
+  // between the top and bottom of the work area.
+  const auto window = m_pWindow.lock();
+  if (!validMapped(window) || !window->isFloating())
+    return;
+
+  auto monitor = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run();
+  monitor = monitor ? monitor : window->m_monitor.lock();
+  if (!monitor)
+    return;
+
+  const auto work = monitor->logicalBoxMinusReserved();
+  const auto reserved = window->getFullWindowReservedArea();
+  auto box = window->layoutTarget()->position();
+  const double top = box.y - reserved.topLeft.y;
+  const double reachable = std::clamp(top, work.y, std::max(work.y, work.y + work.h - reserved.topLeft.y));
+  if (std::abs(reachable - top) < 0.5)
+    return;
+
+  box.y = reachable + reserved.topLeft.y;
+  g_layoutManager->setTargetGeom(box, window->layoutTarget());
+  LOG(Log::DEBUG, "[hyprbars] Moved {:x} to keep its titlebar reachable", (uintptr_t)window.get());
 }
 
 bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS,
@@ -433,8 +468,8 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
 
     if (INACTIVECOLOR > 0) {
       color = m_bWindowHasFocus ? color : configColor(INACTIVECOLOR);
-      if (INVALIDATEICONS && button.userfg && button.iconTex)
-        button.iconTex = nullptr;
+      if (INVALIDATEICONS && button.userfg)
+        button.iconTex.clear();
     }
 
     color.a *= a;
@@ -494,23 +529,25 @@ void COmarchyFloatingHyprBar::renderBarButtonsText(Render::CRenderContext &ctx, 
     bool hovering = VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + button.size + BARBUTTONPADDING, currentPos.y + button.size);
     noScaleOffset += BARBUTTONPADDING + button.size;
 
-    if ((!button.iconTex || button.iconTex->m_texID == 0) && !button.icon.empty()) {
+    auto &iconTex = button.iconTex[static_cast<int>(std::round(scale * 100))];
+    if ((!iconTex || iconTex->m_texID == 0) && !button.icon.empty()) {
       // render icon
       auto fgcol = button.userfg ? button.fgcol : (button.bgcol.r + button.bgcol.g + button.bgcol.b < 1) ? CHyprColor(0xFFFFFFFF) : CHyprColor(0xFF000000);
 
-      button.iconTex = g_pHyprRenderer->renderText(button.icon, fgcol, std::round(button.size * 0.62 * scale), false, "sans", scaledButtonSize);
+      iconTex = g_pHyprRenderer->renderText(button.icon, fgcol, std::round(button.size * 0.62 * scale), false, "sans", scaledButtonSize);
     }
 
-    if (!button.iconTex || button.iconTex->m_texID == 0)
+    if (!iconTex || iconTex->m_texID == 0)
       continue;
 
     const auto iconX =
-        barBox->x + (BUTTONSRIGHT ? barBox->width - offset - scaledButtonSize / 2.0 : offset + scaledButtonSize / 2.0) - button.iconTex->m_size.x / 2.0;
-    const auto iconY = barBox->y + barBox->height / 2.0 - button.iconTex->m_size.y / 2.0;
-    CBox pos = {iconX, iconY, button.iconTex->m_size.x, button.iconTex->m_size.y};
+        barBox->x + (BUTTONSRIGHT ? barBox->width - offset - scaledButtonSize / 2.0 : offset + scaledButtonSize / 2.0) - iconTex->m_size.x / 2.0;
+    const auto iconY = barBox->y + barBox->height / 2.0 - iconTex->m_size.y / 2.0;
+    CBox pos = {iconX, iconY, iconTex->m_size.x, iconTex->m_size.y};
+    pos.round(); // snap to whole pixels, otherwise the icon is sampled at a half-pixel offset and blurs (hyprwm/hyprland-plugins#711)
 
     if (!ICONONHOVER || (ICONONHOVER && m_iButtonHoverState > 0))
-      g_pHyprOpenGL->renderTexture(ctx, button.iconTex, pos, {.a = a});
+      g_pHyprOpenGL->renderTexture(ctx, iconTex, pos, {.a = a});
     offset += scaledButtonsPad + scaledButtonSize;
 
     bool currentBit = (m_iButtonHoverState & (1 << i)) != 0;
@@ -616,10 +653,9 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     if (windowBox.w < 1 || windowBox.h < 1)
       return;
 
-    // Hyprland's own stencil passes (blurred surfaces that discard by alpha,
-    // such as the glassy layers) leave the stencil write mask at 0, and a masked
-    // clear clears nothing. The bar would then be cut by whatever stencil they
-    // left behind and show the window's shadow through instead of its color.
+    // Hyprland's stencil pass for blurred surfaces that discard by alpha leaves
+    // the write mask at 0, and a masked clear clears nothing: the bar would be
+    // cut by whatever stencil that pass left behind.
     glStencilMask(0xFF);
     glClearStencil(0);
     glClear(GL_STENCIL_BUFFER_BIT);
@@ -639,8 +675,7 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
   }
 
-  g_pHyprOpenGL->renderRect(ctx, titleBarBox, color,
-                            {.round = static_cast<int>(scaledRounding), .roundingPower = PWINDOW->presentation().roundingPower(), .blur = SHOULDBLUR, .blurA = a});
+  g_pHyprOpenGL->renderRect(ctx, titleBarBox, color, {.round = static_cast<int>(scaledRounding), .roundingPower = PWINDOW->presentation().roundingPower(), .blur = SHOULDBLUR, .blurA = a});
 
   // render title
   // The app's name is steadier than a window title, which for a web app is often
@@ -648,9 +683,19 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
   std::string title = omarchyAppName(PWINDOW->metadata().appID());
   if (title.empty())
     title = PWINDOW->metadata().title();
-  if (ENABLETITLE && (m_szLastTitle != title || m_bWindowSizeChanged || !m_pTextTex || m_pTextTex->m_texID == 0 || m_bTitleColorChanged)) {
+  // The title is rendered at the monitor's scale. A window dragged between
+  // monitors of different scales is drawn on each, so one texture is kept per
+  // scale; otherwise the title shows at the other monitor's size.
+  if (m_szLastTitle != title || m_bWindowSizeChanged || m_bTitleColorChanged)
+    m_titleTexByScale.clear();
+  if (ENABLETITLE) {
     m_szLastTitle = title;
-    renderBarTitle(BARBUF, pMonitor->m_scale);
+    auto &tex = m_titleTexByScale[static_cast<int>(std::round(pMonitor->m_scale * 100))];
+    if (!tex || tex->m_texID == 0) {
+      renderBarTitle(BARBUF, pMonitor->m_scale);
+      tex = m_pTextTex;
+    }
+    m_pTextTex = tex;
   }
 
   if (ROUNDING) {
@@ -712,6 +757,7 @@ void COmarchyFloatingHyprBar::onConfigReloaded() {
   m_bButtonsDirty = true;
   m_bTitleColorChanged = true;
   m_pTextTex = nullptr;
+  m_titleTexByScale.clear();
 
   g_pDecorationPositioner->repositionDeco(this);
 

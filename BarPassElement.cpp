@@ -17,8 +17,10 @@ std::vector<UP<IPassElement>> COmarchyFloatingBarPassElement::draw(Render::CRend
 bool COmarchyFloatingBarPassElement::needsLiveBlur(Render::CRenderContext &) {
   static auto PENABLEBLURGLOBAL = CConfigValue<Config::BOOL>("decoration:blur:enabled");
 
-  CHyprColor color = data.deco->m_bForcedBarColor.value_or(CHyprColor{static_cast<uint64_t>(g_pOmarchyFloatingGlobalState->config.barColor->value())});
-  // Must agree with renderPass on whether the bar blurs.
+  // The color the bar draws in (focus, forced color and its animation), so
+  // this agrees with renderPass on whether the bar blurs.
+  CHyprColor color = data.deco->m_cRealBarColor ? data.deco->m_cRealBarColor->value()
+                                                : data.deco->m_bForcedBarColor.value_or(CHyprColor{static_cast<uint64_t>(g_pOmarchyFloatingGlobalState->config.barColor->value())});
   const bool GLASSY = data.deco->glassy();
   if (GLASSY)
     color.a *= std::clamp(g_pOmarchyFloatingGlobalState->config.glassOpacity->value(), 0.F, 1.F);
