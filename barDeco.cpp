@@ -462,6 +462,9 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
     const auto scaledButtonsPad = BARBUTTONPADDING * scale;
 
     auto color = button.bgcol;
+    // On a glassy bar a button's face, or its border, would be a solid square on
+    // the glass, so only its symbol and the hover highlight are drawn.
+    const bool GLASSY = glassy();
 
     if (INACTIVECOLOR > 0) {
       color = m_bWindowHasFocus ? color : configColor(INACTIVECOLOR);
@@ -479,13 +482,13 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
     const int rounding = BUTTONROUNDING < 0 ? maxRounding : std::clamp(static_cast<int>(std::round(BUTTONROUNDING * scale)), 0, maxRounding);
     const int borderSize = std::clamp(static_cast<int>(std::round(BUTTONBORDERSIZE * scale)), 0, maxRounding);
 
-    if (borderSize > 0) {
+    if (!GLASSY && borderSize > 0) {
       auto borderColor = configColor(BUTTONBORDERCOLOR);
       borderColor.a *= a;
       g_pHyprOpenGL->renderRect(ctx, buttonBox, borderColor, {.round = rounding});
       auto face = buttonBox.copy().expand(-borderSize);
       g_pHyprOpenGL->renderRect(ctx, face, color, {.round = std::max(0, rounding - borderSize)});
-    } else
+    } else if (!GLASSY)
       g_pHyprOpenGL->renderRect(ctx, buttonBox, color, {.round = rounding});
 
     // A hovered button lifts its face in its own icon color, which follows any theme.
@@ -603,9 +606,14 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
 
   CHyprColor color = m_cRealBarColor->value();
 
+  // A translucent window gets a bar of frosted glass to match its body.
+  const bool GLASSY = glassy();
+  if (GLASSY)
+    color.a *= std::clamp(g_pOmarchyFloatingGlobalState->config.glassOpacity->value(), 0.F, 1.F);
+
   color.a *= a;
   const bool BUTTONSRIGHT = ALIGNBUTTONS != "left";
-  const bool SHOULDBLUR = ENABLEBLUR && *PENABLEBLURGLOBAL && color.a < 1.F;
+  const bool SHOULDBLUR = (ENABLEBLUR || GLASSY) && *PENABLEBLURGLOBAL && color.a < 1.F;
 
   if (HEIGHT < 1) {
     m_iLastHeight = HEIGHT;
@@ -789,6 +797,14 @@ CBox COmarchyFloatingHyprBar::assignedBoxGlobal() {
 }
 
 PHLWINDOW COmarchyFloatingHyprBar::getOwner() { return m_pWindow.lock(); }
+
+// Whether the window is one Omarchy makes see-through (glass_tag), whose bar is
+// drawn as frosted glass instead of a solid color.
+bool COmarchyFloatingHyprBar::glassy() {
+  const auto PWINDOW = m_pWindow.lock();
+  const auto tag = g_pOmarchyFloatingGlobalState->config.glassTag->value();
+  return PWINDOW && !tag.empty() && PWINDOW->m_ruleApplicator->m_tagKeeper.isTagged(tag);
+}
 
 void COmarchyFloatingHyprBar::updateRules() {
   const auto PWINDOW = m_pWindow.lock();
