@@ -462,8 +462,8 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
     const auto scaledButtonsPad = BARBUTTONPADDING * scale;
 
     auto color = button.bgcol;
-    // On a glassy bar a button's face would be a solid square on the glass, so
-    // only its symbol and the hover highlight are drawn.
+    // On a glassy bar a button's face, or its border, would be a solid square on
+    // the glass, so only its symbol and the hover highlight are drawn.
     const bool GLASSY = glassy();
 
     if (INACTIVECOLOR > 0) {
@@ -482,13 +482,12 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
     const int rounding = BUTTONROUNDING < 0 ? maxRounding : std::clamp(static_cast<int>(std::round(BUTTONROUNDING * scale)), 0, maxRounding);
     const int borderSize = std::clamp(static_cast<int>(std::round(BUTTONBORDERSIZE * scale)), 0, maxRounding);
 
-    if (borderSize > 0) {
+    if (!GLASSY && borderSize > 0) {
       auto borderColor = configColor(BUTTONBORDERCOLOR);
       borderColor.a *= a;
       g_pHyprOpenGL->renderRect(ctx, buttonBox, borderColor, {.round = rounding});
       auto face = buttonBox.copy().expand(-borderSize);
-      if (!GLASSY)
-        g_pHyprOpenGL->renderRect(ctx, face, color, {.round = std::max(0, rounding - borderSize)});
+      g_pHyprOpenGL->renderRect(ctx, face, color, {.round = std::max(0, rounding - borderSize)});
     } else if (!GLASSY)
       g_pHyprOpenGL->renderRect(ctx, buttonBox, color, {.round = rounding});
 

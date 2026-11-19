@@ -25,7 +25,7 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | `enabled` | false | Upstream defaults to true. Off here, so a plugin left loaded after the config stops configuring it draws nothing. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
 | `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
-| `glass_tag` | `transparent-window` | Windows with this tag, the ones Omarchy makes see-through, get a bar of frosted glass: `bar_color` at `glass_opacity` over a blur of what is behind it, with button faces left out so they don't sit on the glass as solid squares. Empty draws every bar solid. |
+| `glass_tag` | `transparent-window` | Windows with this tag, the ones Omarchy makes see-through, get a bar of frosted glass: `bar_color` at `glass_opacity` over a blur of what is behind it, with button faces and borders left out so they don't sit on the glass as solid squares. Empty draws every bar solid. |
 | `glass_opacity` | 0.6 | Opacity of `bar_color` on a glass bar. |
 
 ## Titles
