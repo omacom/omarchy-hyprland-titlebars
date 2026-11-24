@@ -227,6 +227,13 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
     opt.desc       = "Mode for the " + std::string(L) + " layout: true/always, false/never, active, or hover";
     opt.value      = makeShared<Config::Values::CStringValue>(opt.path.c_str(), opt.desc.c_str(), "false");
   }
+  {
+    auto& opt = g_pOmarchyFloatingGlobalState->config.layoutMinimizeButtonEnabled["floating"];
+    opt.path = "plugin:hyprbars:layout_floating_minimize_button_enabled";
+    opt.desc = "Show the minimize button on the floating layout";
+    opt.value = makeShared<Config::Values::CBoolValue>(opt.path.c_str(), opt.desc.c_str(), true);
+  }
+
 
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.textColor);
@@ -253,6 +260,9 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, opt.value);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.workspaceTag);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.iconOnHover);
+  for (const auto& [name, opt] : g_pOmarchyFloatingGlobalState->config.layoutMinimizeButtonEnabled)
+    HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, opt.value);
+
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.onDoubleClick);
 
   HyprlandAPI::addLuaFunction(OMARCHY_FLOATING_PHANDLE, "hyprbars", "add_button", ::newOmarchyFloatingLuaButton);

@@ -60,6 +60,11 @@ struct SOmarchyFloatingGlobalState {
       SP<Config::Values::CStringValue> value;
     };
     std::map<std::string, SLayoutOption> layoutEnabled;
+    struct SLayoutBoolOption {
+      std::string path, desc;
+      SP<Config::Values::CBoolValue> value;
+    };
+    std::map<std::string, SLayoutBoolOption> layoutMinimizeButtonEnabled;
     SP<Config::Values::CStringValue> barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, workspaceTag;
   } config;
 };

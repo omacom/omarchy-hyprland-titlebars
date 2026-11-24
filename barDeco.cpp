@@ -35,7 +35,8 @@
 #include "appName.hpp"
 
 #include <algorithm>
-#include <climits>
+  #include <climits>
+  #include <vector>
 
 using namespace Render::GL;
 
@@ -617,18 +618,36 @@ void COmarchyFloatingHyprBar::keepTitlebarReachable() {
   LOG(Log::DEBUG, "[hyprbars] Moved {:x} to keep its titlebar reachable", (uintptr_t)window.get());
 }
 
+static bool isMinimizeCmd(const std::string &cmd) {
+  return cmd.find("window-minimize") != std::string::npos || cmd.find("minimize") != std::string::npos;
+}
+
+static bool minimizeButtonVisibleFor(const PHLWINDOW &win) {
+  if (!win)
+    return true;
+  const auto layoutName = activeLayoutName(win);
+  if (const auto it = g_pOmarchyFloatingGlobalState->config.layoutMinimizeButtonEnabled.find(layoutName);
+      it != g_pOmarchyFloatingGlobalState->config.layoutMinimizeButtonEnabled.end())
+    return it->second.value->value();
+  return false;
+}
+
 bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS,
                                             const bool BUTTONSRIGHT) {
+  const auto win = m_pWindow.lock();
+  const bool showMinimize = minimizeButtonVisibleFor(win);
   // check if on a button
   float offset = barPadding;
 
   for (auto &b : g_pOmarchyFloatingGlobalState->buttons) {
+    if (isMinimizeCmd(b.cmd) && !showMinimize)
+      continue;
     const auto BARBUF = Vector2D{(int)assignedBoxGlobal().w, barHeight};
     Vector2D currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - barButtonPadding - b.size - offset : offset), (BARBUF.y - b.size) / 2.0}.floor();
 
     if (VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + b.size + barButtonPadding, currentPos.y + b.size)) {
       // hit on close
-      Config::Supplementary::executor()->spawn(windowCommand(b.cmd, m_pWindow.lock()));
+      Config::Supplementary::executor()->spawn(windowCommand(b.cmd, win));
       return true;
     }
 
@@ -636,6 +655,7 @@ bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::
   }
   return false;
 }
+
 
 void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const float scale) {
   const auto COLORVAL = g_pOmarchyFloatingGlobalState->config.textColor->value();
@@ -696,8 +716,15 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
   const auto visibleCount = getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale);
   const bool INVALIDATEICONS = m_bButtonsDirty || m_bWindowSizeChanged;
 
+  const auto win = m_pWindow.lock();
+  const bool showMinimize = minimizeButtonVisibleFor(win);
+  std::vector<size_t> visibleIndices;
+  for (size_t i = 0; i < visibleCount; ++i)
+    if (!(isMinimizeCmd(g_pOmarchyFloatingGlobalState->buttons[i].cmd) && !showMinimize))
+      visibleIndices.push_back(i);
+
   int offset = BARPADDING * scale;
-  for (size_t i = 0; i < visibleCount; ++i) {
+  for (const size_t i : visibleIndices) {
     auto &button = g_pOmarchyFloatingGlobalState->buttons[i];
     const auto scaledButtonSize = button.size * scale;
     const auto scaledButtonsPad = BARBUTTONPADDING * scale;
@@ -751,10 +778,17 @@ void COmarchyFloatingHyprBar::renderBarButtonsText(Render::CRenderContext &ctx, 
   const auto visibleCount = getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale);
   const auto COORDS = cursorRelativeToBar();
 
+  const auto win = m_pWindow.lock();
+  const bool showMinimize = minimizeButtonVisibleFor(win);
+  std::vector<size_t> visibleIndices;
+  for (size_t i = 0; i < visibleCount; ++i)
+    if (!(isMinimizeCmd(g_pOmarchyFloatingGlobalState->buttons[i].cmd) && !showMinimize))
+      visibleIndices.push_back(i);
+
   int offset = BARPADDING * scale;
   float noScaleOffset = BARPADDING;
 
-  for (size_t i = 0; i < visibleCount; ++i) {
+  for (const size_t i : visibleIndices) {
     auto &button = g_pOmarchyFloatingGlobalState->buttons[i];
     const auto scaledButtonSize = button.size * scale;
     const auto scaledButtonsPad = BARBUTTONPADDING * scale;
