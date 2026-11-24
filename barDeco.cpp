@@ -128,6 +128,14 @@ eHyprBarMode COmarchyFloatingHyprBar::combinedMode() const {
   }
 
   CConfigValue<Config::STRING> override(path);
+  // When the user has not configured hyprbars at all, the registered layout
+  // defaults must not kick in either: an unconfigured plugin draws nothing.
+  // Configuring the global mode or this layout enables the default semantics.
+  CConfigValue<Config::STRING> enabledOpt("plugin:hyprbars:enabled");
+  const bool configured = enabledOpt.setByUser() || (override.good() && override.setByUser());
+  if (!configured)
+    return global;
+
   if (override.good()) {
     const Config::STRING effective = override.setByUser() ? *override : layoutIt != g_pOmarchyFloatingGlobalState->config.layoutEnabled.end() ? layoutIt->second.value->value() : "";
     if (effective == "unset")
