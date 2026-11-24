@@ -21,6 +21,11 @@
 #include <hyprland/src/protocols/LayerShell.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
+#include <hyprland/src/config/ConfigValue.hpp>
+#include <hyprland/src/layout/space/Space.hpp>
+#include <hyprland/src/layout/algorithm/Algorithm.hpp>
+#include <hyprland/src/layout/supplementary/WorkspaceAlgoMatcher.hpp>
+#include <hyprland/src/workspace/HLWorkspace.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
 
@@ -36,6 +41,21 @@ using namespace Render::GL;
 
 static CHyprColor configColor(Config::INTEGER color) { return CHyprColor{static_cast<uint64_t>(color)}; }
 
+static std::string windowLayoutName(const PHLWINDOW& window) {
+  const auto workspace = window->m_workspace;
+  if (!workspace)
+    return "";
+  const auto space = workspace->space();
+  if (!space)
+    return "";
+  const auto algo = space->algorithm();
+  if (!algo)
+    return "";
+  const auto& tiled = algo->tiledAlgo();
+  if (!tiled)
+    return "";
+  return Layout::Supplementary::algoMatcher()->getNameForTiledAlgo(tiled.get());
+}
 static std::string windowCommand(std::string command, const PHLWINDOW &window) {
   // Resolve the decoration owner synchronously. An asynchronously spawned
   // command must not choose its target from whatever happens to be focused.
@@ -72,9 +92,31 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
 
 COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() { std::erase(g_pOmarchyFloatingGlobalState->bars, m_self); }
 
+bool COmarchyFloatingHyprBar::barEnabled() const {
+  const auto PWINDOW = m_pWindow.lock();
+  if (!PWINDOW || !g_pOmarchyFloatingGlobalState->config.enabled->value())
+    return false;
+
+  const auto layoutName = PWINDOW->isFloating() ? std::string("floating") : windowLayoutName(PWINDOW);
+  if (layoutName.empty())
+    return false;
+
+  const auto it = g_pOmarchyFloatingGlobalState->config.layoutEnabled.find(layoutName);
+  if (it != g_pOmarchyFloatingGlobalState->config.layoutEnabled.end())
+    return it->second.value->value();
+
+  // Unknown/custom layouts have no registered value; honor a user-set override
+  // read straight from the config tree, and stay off otherwise.
+  CConfigValue<Config::BOOL> override("plugin:hyprbars:layout_" + layoutName + "_enabled");
+  if (override.good() && override.setByUser())
+    return *override;
+
+  return false;
+}
+
 SDecorationPositioningInfo COmarchyFloatingHyprBar::getPositioningInfo() {
   const auto HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
-  const auto ENABLED = g_pOmarchyFloatingGlobalState->config.enabled->value();
+  const auto ENABLED = barEnabled();
   const auto PRECEDENCE = g_pOmarchyFloatingGlobalState->config.barPrecedenceOverBorder->value();
 
   SDecorationPositioningInfo info;
@@ -96,7 +138,7 @@ void COmarchyFloatingHyprBar::onPositioningReply(const SDecorationPositioningRep
 std::string COmarchyFloatingHyprBar::getDisplayName() { return "Hyprbar"; }
 
 bool COmarchyFloatingHyprBar::inputIsValid() {
-  if (m_hidden || !g_pOmarchyFloatingGlobalState->config.enabled->value())
+  if (m_hidden || !barEnabled())
     return false;
 
   if (g_pSeatManager->m_seatGrab && !g_pSeatManager->m_seatGrab->accepts(m_pWindow->wlSurface()->resource()))
@@ -556,7 +598,7 @@ void COmarchyFloatingHyprBar::renderBarButtonsText(Render::CRenderContext &ctx, 
 }
 
 void COmarchyFloatingHyprBar::draw(Render::CRenderContext &ctx, PHLMONITOR pMonitor, const float &a, const Render::SWindowRenderPresentation &presentation) {
-  const auto ENABLED = g_pOmarchyFloatingGlobalState->config.enabled->value();
+  const auto ENABLED = barEnabled();
 
   if (m_bLastEnabledState != ENABLED) {
     m_bLastEnabledState = ENABLED;
@@ -754,7 +796,7 @@ void COmarchyFloatingHyprBar::onConfigReloaded() {
 
   // Bars start disabled, so the reload that enables them has to make room for
   // them, as a change in m_hidden does.
-  const auto ENABLED = g_pOmarchyFloatingGlobalState->config.enabled->value();
+  const auto ENABLED = barEnabled();
   if (m_bLastEnabledState != ENABLED) {
     m_bLastEnabledState = ENABLED;
     if (const auto PWINDOW = m_pWindow.lock(); PWINDOW)
@@ -803,9 +845,11 @@ void COmarchyFloatingHyprBar::updateRules() {
 
   if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pOmarchyFloatingGlobalState->nobarRuleIdx))
     m_hidden = truthy(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pOmarchyFloatingGlobalState->nobarRuleIdx)->effect);
+  // workspace_tag is an optional restriction across every layout; empty means
+  // every window in an enabled layout gets a bar.
   const auto workspaceTag = g_pOmarchyFloatingGlobalState->config.workspaceTag->value();
   if (!workspaceTag.empty())
-    m_hidden = m_hidden || !PWINDOW->isFloating() || !PWINDOW->m_ruleApplicator->m_tagKeeper.isTagged(workspaceTag);
+    m_hidden = m_hidden || !PWINDOW->m_ruleApplicator->m_tagKeeper.isTagged(workspaceTag);
   if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pOmarchyFloatingGlobalState->barColorRuleIdx))
     m_bForcedBarColor = CHyprColor(
         Config::ParserUtils::parseColor(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pOmarchyFloatingGlobalState->barColorRuleIdx)->effect).value_or(0));

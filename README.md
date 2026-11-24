@@ -1,6 +1,9 @@
 # omarchy-hyprland-titlebars
 
-A native Hyprland plugin that gives Omarchy's floating workspace mode its window titlebars. It draws theme-neutral titlebars on floating windows; dragging one moves the window, and a maximized window dragged by its titlebar comes back to its floating size under the pointer.
+A native Hyprland plugin that gives Omarchy windows titlebars in every layout:
+floating, tiled, and scrolling. It draws theme-neutral titlebars; dragging one
+moves the window, and a maximized window dragged by its titlebar comes back to
+its floating size under the pointer.
 
 Omarchy core has no build step, so the plugin ships as its own package, `omarchy-hyprland-titlebars`, which [omarchy-pkgs](https://github.com/omacom/omarchy-pkgs) builds from this repository's GitHub releases. Omarchy loads it from its Lua config only while a workspace floats, from a fixed path:
 
@@ -22,10 +25,10 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 
 | Option | Default | Behavior |
 | --- | --- | --- |
-| `enabled` | false | Upstream defaults to true. Off here, so a plugin left loaded after the config stops configuring it draws nothing. |
+| `enabled` | false | Global master switch: false hides every titlebar. When true, each layout shows bars per its `layout_<name>_enabled` override. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
-| `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
-
+| `layout_<name>_enabled` | floating true, tiled false | Per-layout override, honored only when `enabled` is true. Defaults match upstream: `layout_floating_enabled` is true, the tiled layouts (`layout_dwindle_enabled`, `layout_master_enabled`, `layout_monocle_enabled`, `layout_scrolling_enabled`) are false. Any other layout name (e.g. a custom tiled layout) also works and defaults to false. So `enabled = true` with no overrides gives floating-only bars, as upstream. |
+| `workspace_tag` | empty | Optional restriction applied across every layout; empty means every window in an enabled layout gets a bar. |
 ## Titles
 
 A titlebar shows the name of the app the window belongs to, when a desktop entry claims the window's class through `StartupWMClass` or its file name, and the window's own title otherwise. A web app titles its window with its page or just its domain, so this is what keeps `web.whatsapp.com` reading WhatsApp. Entries are read from `$XDG_DATA_HOME/applications` and then `$XDG_DATA_DIRS`, so a user's own entry wins, and an entry added while Hyprland runs is picked up within a couple of seconds.
@@ -74,6 +77,6 @@ To release, make a GitHub release tagged `vX.Y.Z` with notes on what changed. om
 python3 tools/verify.py build/titlebars.so
 ```
 
-The verifier needs a running Hyprland session with exactly one Hyprland instance, plus `foot`, `grim`, `wayland-scanner`, and a C compiler. It starts a disposable nested Hyprland with its own runtime directory and never loads the candidate library into the parent compositor. It checks repeated load/reload/unload, interleaved with the Windows XP fork when `/usr/lib/omarchy-windows-xp/hyprbars.so` is installed, and that a loaded plugin the config no longer configures reserves no titlebar space. It then exercises real pointer titlebar dragging to the screen edges without snapping or losing the titlebar off the top, double-click maximize, and restoring a maximized window by dragging its titlebar. A two-window regression check deliberately delays button and double-click commands and changes focus before they run, to verify that actions keep the clicked window as their target. A final check confirms that `workspace_tag`-scoped titlebars release their space immediately when a window is tiled or untagged.
+The verifier needs a running Hyprland session with exactly one Hyprland instance, plus `foot`, `grim`, `wayland-scanner`, and a C compiler. It starts a disposable nested Hyprland with its own runtime directory and never loads the candidate library into the parent compositor. It checks repeated load/reload/unload, interleaved with the Windows XP fork when `/usr/lib/omarchy-windows-xp/hyprbars.so` is installed, and that a loaded plugin the config no longer configures reserves no titlebar space. It then exercises real pointer titlebar dragging to the screen edges without snapping or losing the titlebar off the top, double-click maximize, and restoring a maximized window by dragging its titlebar. A two-window regression check deliberately delays button and double-click commands and changes focus before they run, to verify that actions keep the clicked window as their target. Note: the stock verifier's final check asserts that `workspace_tag`-scoped titlebars release their space when a window is tiled or untagged; that holds as long as no `layout_<name>_enabled` key is set for the tiled layout, since tiled windows are off by default and only keep a titlebar when their layout is explicitly enabled.
 
 Screenshots and logs go to `/tmp/omarchy-hyprland-titlebars-verification` by default; pass `--artifacts DIR` to change it.

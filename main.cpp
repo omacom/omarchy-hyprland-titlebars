@@ -200,6 +200,18 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:on_double_click", "Action to execute on double click of the bar", "");
   g_pOmarchyFloatingGlobalState->config.workspaceTag =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:workspace_tag", "Restrict bars to windows with this tag", "");
+  {
+    auto& floating = g_pOmarchyFloatingGlobalState->config.layoutEnabled["floating"];
+    floating.path  = "plugin:hyprbars:layout_floating_enabled";
+    floating.desc  = "Show titlebars on the floating layout";
+    floating.value = makeShared<Config::Values::CBoolValue>(floating.path.c_str(), floating.desc.c_str(), true);
+  }
+  for (const auto& L : {"dwindle", "master", "monocle", "scrolling"}) {
+    auto& opt = g_pOmarchyFloatingGlobalState->config.layoutEnabled[L];
+    opt.path       = "plugin:hyprbars:layout_" + std::string(L) + "_enabled";
+    opt.desc       = "Show titlebars on the " + std::string(L) + " layout";
+    opt.value      = makeShared<Config::Values::CBoolValue>(opt.path.c_str(), opt.desc.c_str(), false);
+  }
 
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.textColor);
@@ -221,6 +233,8 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderSize);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.enabled);
+  for (const auto& [name, opt] : g_pOmarchyFloatingGlobalState->config.layoutEnabled)
+    HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, opt.value);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.workspaceTag);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.iconOnHover);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.onDoubleClick);

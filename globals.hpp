@@ -43,6 +43,11 @@ struct SOmarchyFloatingGlobalState {
     SP<Config::Values::CIntValue> buttonRounding;
     SP<Config::Values::CIntValue> buttonBorderSize;
     SP<Config::Values::CBoolValue> barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover;
+    struct SLayoutOption {
+      std::string path, desc;
+      SP<Config::Values::CBoolValue> value;
+    };
+    std::map<std::string, SLayoutOption> layoutEnabled;
     SP<Config::Values::CStringValue> barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, workspaceTag;
   } config;
 };

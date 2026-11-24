@@ -54,6 +54,8 @@ public:
 
   WP<COmarchyFloatingHyprBar> m_self;
 
+  bool barEnabled() const;
+
 private:
   SBoxExtents m_seExtents;
 
