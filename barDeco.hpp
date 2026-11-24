@@ -134,7 +134,7 @@ private:
   // for dynamic updates
   int m_iLastHeight = 0;
 
-  size_t getVisibleButtonCount(Config::INTEGER barButtonPadding, Config::INTEGER barPadding, const Vector2D &bufferSize, const float scale);
+
 
   friend class COmarchyFloatingBarPassElement;
 };

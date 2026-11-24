@@ -148,7 +148,16 @@ eHyprBarMode COmarchyFloatingHyprBar::combinedMode() const {
     return global;
 
   if (override.good()) {
-    const Config::STRING effective = override.setByUser() ? *override : layoutIt != g_pOmarchyFloatingGlobalState->config.layoutEnabled.end() ? layoutIt->second.value->value() : "";
+    // A floating window in a mixed workspace uses its active layout's mode
+    // when that layout is explicitly configured; otherwise it falls back to
+    // the global mode instead of the layout's registered default, so it
+    // never loses its titlebar to an unset tiled default.
+    const bool userSet = override.setByUser();
+    Config::STRING effective;
+    if (userSet)
+      effective = *override;
+    else if (layoutIt != g_pOmarchyFloatingGlobalState->config.layoutEnabled.end() && !PWINDOW->isFloating())
+      effective = layoutIt->second.value->value();
     if (effective == "unset")
       return global;
     if (!effective.empty())
@@ -632,16 +641,39 @@ static bool minimizeButtonVisibleFor(const PHLWINDOW &win) {
   return false;
 }
 
+static std::vector<size_t> visibleButtonIndices(const PHLWINDOW &win) {
+  std::vector<size_t> indices;
+  const bool showMinimize = minimizeButtonVisibleFor(win);
+  const auto &buttons = g_pOmarchyFloatingGlobalState->buttons;
+  for (size_t i = 0; i < buttons.size(); ++i)
+    if (!(isMinimizeCmd(buttons[i].cmd) && !showMinimize))
+      indices.push_back(i);
+  return indices;
+}
+
+static std::vector<size_t> fitVisibleButtonIndices(const PHLWINDOW &win, float availableWidth) {
+  const auto candidates = visibleButtonIndices(win);
+  std::vector<size_t> out;
+  float remaining = availableWidth;
+  for (const size_t i : candidates) {
+    const float space = g_pOmarchyFloatingGlobalState->buttons[i].size + g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
+    if (remaining < space)
+      break;
+    out.push_back(i);
+    remaining -= space;
+  }
+  return out;
+}
+
 bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS,
                                             const bool BUTTONSRIGHT) {
   const auto win = m_pWindow.lock();
-  const bool showMinimize = minimizeButtonVisibleFor(win);
+  const auto indices = fitVisibleButtonIndices(win, assignedBoxGlobal().w - 2.f * barPadding);
   // check if on a button
   float offset = barPadding;
 
-  for (auto &b : g_pOmarchyFloatingGlobalState->buttons) {
-    if (isMinimizeCmd(b.cmd) && !showMinimize)
-      continue;
+  for (const size_t i : indices) {
+    const auto &b = g_pOmarchyFloatingGlobalState->buttons[i];
     const auto BARBUF = Vector2D{(int)assignedBoxGlobal().w, barHeight};
     Vector2D currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - barButtonPadding - b.size - offset : offset), (BARBUF.y - b.size) / 2.0}.floor();
 
@@ -686,22 +718,7 @@ void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const f
   m_pTextTex = g_pHyprRenderer->renderText(m_szLastTitle, COLOR, scaledSize, false, FONT, maxWidth, WEIGHT.m_value);
 }
 
-size_t COmarchyFloatingHyprBar::getVisibleButtonCount(Config::INTEGER barButtonPadding, Config::INTEGER barPadding, const Vector2D &bufferSize,
-                                                      const float scale) {
-  float availableSpace = bufferSize.x - barPadding * scale * 2;
-  size_t count = 0;
 
-  for (const auto &button : g_pOmarchyFloatingGlobalState->buttons) {
-    const float buttonSpace = (button.size + barButtonPadding) * scale;
-    if (availableSpace >= buttonSpace) {
-      count++;
-      availableSpace -= buttonSpace;
-    } else
-      break;
-  }
-
-  return count;
-}
 
 void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a) {
   const auto BARBUTTONPADDING = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
@@ -713,15 +730,12 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
   const auto BUTTONBORDERCOLOR = g_pOmarchyFloatingGlobalState->config.buttonBorderColor->value();
 
   const bool BUTTONSRIGHT = ALIGNBUTTONS != "left";
-  const auto visibleCount = getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale);
   const bool INVALIDATEICONS = m_bButtonsDirty || m_bWindowSizeChanged;
 
+  // Filter hidden buttons before measuring width so drawing and hit-testing
+  // agree on which buttons exist.
   const auto win = m_pWindow.lock();
-  const bool showMinimize = minimizeButtonVisibleFor(win);
-  std::vector<size_t> visibleIndices;
-  for (size_t i = 0; i < visibleCount; ++i)
-    if (!(isMinimizeCmd(g_pOmarchyFloatingGlobalState->buttons[i].cmd) && !showMinimize))
-      visibleIndices.push_back(i);
+  const auto visibleIndices = fitVisibleButtonIndices(win, barBox->w / scale - 2.f * BARPADDING);
 
   int offset = BARPADDING * scale;
   for (const size_t i : visibleIndices) {
@@ -775,15 +789,12 @@ void COmarchyFloatingHyprBar::renderBarButtonsText(Render::CRenderContext &ctx, 
   const auto ICONONHOVER = g_pOmarchyFloatingGlobalState->config.iconOnHover->value();
 
   const bool BUTTONSRIGHT = ALIGNBUTTONS != "left";
-  const auto visibleCount = getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale);
   const auto COORDS = cursorRelativeToBar();
 
+  // Same filtered list as renderBarButtons and the press handler: filter
+  // hidden buttons first, then fit by width.
   const auto win = m_pWindow.lock();
-  const bool showMinimize = minimizeButtonVisibleFor(win);
-  std::vector<size_t> visibleIndices;
-  for (size_t i = 0; i < visibleCount; ++i)
-    if (!(isMinimizeCmd(g_pOmarchyFloatingGlobalState->buttons[i].cmd) && !showMinimize))
-      visibleIndices.push_back(i);
+  const auto visibleIndices = fitVisibleButtonIndices(win, barBox->w / scale - 2.f * BARPADDING);
 
   int offset = BARPADDING * scale;
   float noScaleOffset = BARPADDING;
@@ -1112,7 +1123,7 @@ void COmarchyFloatingHyprBar::damageOnButtonHover() {
   const auto COORDS = cursorRelativeToBar();
 
   unsigned int hoverState = 0;
-  for (size_t i = 0; i < g_pOmarchyFloatingGlobalState->buttons.size(); ++i) {
+  for (const size_t i : fitVisibleButtonIndices(m_pWindow.lock(), assignedBoxGlobal().w - 2.f * BARPADDING)) {
     const auto &b = g_pOmarchyFloatingGlobalState->buttons[i];
     const auto BARBUF = Vector2D{(int)assignedBoxGlobal().w, HEIGHT};
     Vector2D currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - BARBUTTONPADDING - b.size - offset : offset), (BARBUF.y - b.size) / 2.0}.floor();
