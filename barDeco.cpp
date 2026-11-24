@@ -62,6 +62,8 @@ static eHyprBarMode parseMode(const std::string& s) {
     return eHyprBarMode::ALWAYS;
   if (s == "active")
     return eHyprBarMode::ACTIVE;
+  if (s == "hover")
+    return eHyprBarMode::HOVER;
   return eHyprBarMode::NEVER; // "never", "false", or unknown
 }
 static std::string windowCommand(std::string command, const PHLWINDOW &window) {
@@ -131,12 +133,18 @@ eHyprBarMode COmarchyFloatingHyprBar::combinedMode() const {
 bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
   if (m_hidden)
     return false;
-  const auto mode = combinedMode();
-  if (mode == eHyprBarMode::NEVER)
-    return false;
-  if (mode == eHyprBarMode::ACTIVE)
-    return m_focused;
-  return true;
+  switch (combinedMode()) {
+    case eHyprBarMode::NEVER: return false;
+    case eHyprBarMode::ACTIVE: return m_focused;
+    case eHyprBarMode::ALWAYS: return true;
+    case eHyprBarMode::HOVER:
+      // Touch has no hover: while a touch gesture was the last input, fall
+      // back to active mode.
+      if (g_pOmarchyFloatingGlobalState->lastInputTouch)
+        return m_focused;
+      return isPointerOver();
+  }
+  return false;
 }
 
 void COmarchyFloatingHyprBar::updateFocus(PHLWINDOW activeWindow) {
@@ -144,14 +152,98 @@ void COmarchyFloatingHyprBar::updateFocus(PHLWINDOW activeWindow) {
   if (focused == m_focused)
     return;
   m_focused = focused;
-  if (combinedMode() == eHyprBarMode::ACTIVE) {
-    g_pDecorationPositioner->repositionDeco(this);
-    if (const auto PWINDOW = m_pWindow.lock(); PWINDOW)
-      if (const auto monitor = PWINDOW->m_monitor.lock())
-        monitor->m_scheduledRecalc = true;
-    damageEntire();
-  }
+  applyShownStateChange();
 }
+
+void COmarchyFloatingHyprBar::applyShownStateChange() {
+  const auto ENABLED = isEffectivelyShown();
+  if (ENABLED == m_bLastEnabledState)
+    return;
+  m_bLastEnabledState = ENABLED;
+  g_pDecorationPositioner->repositionDeco(this);
+  if (const auto PWINDOW = m_pWindow.lock(); PWINDOW)
+    if (const auto monitor = PWINDOW->m_monitor.lock())
+      monitor->m_scheduledRecalc = true;
+  damageEntire();
+}
+
+void COmarchyFloatingHyprBar::updateHover() {
+  // A drag keeps the bar up under the pointer, wherever the window goes.
+  if (m_bDraggingThis || m_bDragPending)
+    return;
+  if (combinedMode() != eHyprBarMode::HOVER)
+    return;
+  applyShownStateChange();
+}
+
+CBox COmarchyFloatingHyprBar::barBand() const {
+  const auto WIN = m_pWindow.lock();
+  CBox band;
+  if (!validMapped(WIN))
+    return band;
+
+  const auto PWORKSPACE = WIN->m_workspace;
+  const auto WORKSPACEOFFSET = PWORKSPACE && !(WIN->m_state & Desktop::View::WINDOW_STATE_PINNED) ? PWORKSPACE->m_renderOffset->value() : Vector2D();
+
+  const auto HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
+  const auto BORDER = WIN->presentation().borderSize();
+
+  // The band above the window's content box where the positioner puts the bar.
+  band = CBox(WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x + WIN->presentation().floatingOffset().x,
+              WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y + WIN->presentation().floatingOffset().y - HEIGHT - BORDER,
+              WIN->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x, HEIGHT + BORDER);
+  band.translate(WORKSPACEOFFSET);
+
+  // On floating windows the real placement can differ (floating offset, border
+  // precedence, rounding); include the live assigned box when there is one.
+  const auto BARASSIGNED = assignedBoxGlobal();
+  if (BARASSIGNED.w > 0 && BARASSIGNED.h > 0) {
+    band.x = std::min(band.x, BARASSIGNED.x);
+    band.y = std::min(band.y, BARASSIGNED.y);
+    band.w = std::max(band.x + band.w, BARASSIGNED.x + BARASSIGNED.w) - band.x;
+    band.h = std::max(band.y + band.h, BARASSIGNED.y + BARASSIGNED.h) - band.y;
+  }
+  return band;
+}
+
+CBox COmarchyFloatingHyprBar::hoverRegion() const {
+  const auto WIN = m_pWindow.lock();
+  CBox region;
+  if (!validMapped(WIN))
+    return region;
+
+  const auto PWORKSPACE = WIN->m_workspace;
+  const auto WORKSPACEOFFSET = PWORKSPACE && !(WIN->m_state & Desktop::View::WINDOW_STATE_PINNED) ? PWORKSPACE->m_renderOffset->value() : Vector2D();
+
+  region = CBox(WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x + WIN->presentation().floatingOffset().x,
+                WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y + WIN->presentation().floatingOffset().y,
+                WIN->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x, WIN->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y);
+  region.translate(WORKSPACEOFFSET);
+
+  const auto BAND = barBand();
+  region.x = std::min(region.x, BAND.x);
+  region.y = std::min(region.y, BAND.y);
+  region.w = std::max(region.x + region.w, BAND.x + BAND.w) - region.x;
+  region.h = std::max(region.y + region.h, BAND.y + BAND.h) - region.y;
+  return region;
+}
+
+bool COmarchyFloatingHyprBar::isPointerOver() const {
+  const auto MOUSE = g_pInputManager->getMouseCoordsInternal();
+  if (!hoverRegion().containsPoint(MOUSE))
+    return false;
+
+  // The bar strip itself is this window's target even though it is not a
+  // surface the hit tester reports.
+  if (barBand().containsPoint(MOUSE))
+    return true;
+
+  // Overlapping floating windows: only the topmost window under the pointer
+  // counts; a covered window must not hover-show its bar.
+  Desktop::CViewHitTester hitTester{*Desktop::viewState()};
+  return hitTester.windowAt(MOUSE, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING) == m_pWindow;
+}
+
 
 SDecorationPositioningInfo COmarchyFloatingHyprBar::getPositioningInfo() {
   const auto HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
@@ -256,6 +348,7 @@ void COmarchyFloatingHyprBar::onMouseMove(Vector2D coords) {
   // Hovered buttons are highlighted, so redraw when the pointer moves between
   // them, also with hardware cursors.
   damageOnButtonHover();
+  updateHover();
 
   if (!m_bDragPending || m_bTouchEv || !validMapped(m_pWindow) || m_touchId != 0)
     return;
@@ -856,7 +949,7 @@ uint64_t COmarchyFloatingHyprBar::getDecorationFlags() {
   return DECORATION_ALLOWS_MOUSE_INPUT | (g_pOmarchyFloatingGlobalState->config.barPartOfWindow->value() ? DECORATION_PART_OF_MAIN_WINDOW : 0);
 }
 
-CBox COmarchyFloatingHyprBar::assignedBoxGlobal() {
+CBox COmarchyFloatingHyprBar::assignedBoxGlobal() const {
   if (!validMapped(m_pWindow))
     return {};
 

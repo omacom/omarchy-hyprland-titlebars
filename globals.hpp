@@ -27,6 +27,7 @@ struct SOmarchyFloatingHyprButton {
 enum class eHyprBarMode : uint8_t {
   NEVER,
   ACTIVE,
+  HOVER,
   ALWAYS,
 };
 
@@ -35,6 +36,9 @@ class COmarchyFloatingHyprBar;
 struct SOmarchyFloatingGlobalState {
   std::vector<SOmarchyFloatingHyprButton> buttons;
   std::vector<WP<COmarchyFloatingHyprBar>> bars;
+  // Touch has no hover: while the last input was a touch gesture a hover-mode
+  // bar behaves as if it were in active mode.
+  bool lastInputTouch = false;
   uint32_t nobarRuleIdx = 0;
   uint32_t barColorRuleIdx = 0;
   uint32_t titleColorRuleIdx = 0;

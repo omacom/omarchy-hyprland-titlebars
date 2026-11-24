@@ -295,6 +295,56 @@ end
     assert client()['at'][1] < 30, client()
     capture('workspace-untagged-no-titlebar')
     print('PASS: workspace-scoped titlebars release space immediately when tiled or untagged', flush=True)
+
+    # Hover mode: a titlebar shows only while the pointer is over the window or
+    # its own bar, releasing its reserved space the moment the pointer leaves.
+    ctl('dispatch', f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "unset", window = "address:{second_address}" }})')
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { enabled = "false", layout_dwindle_enabled = "hover", workspace_tag = "" } } })')
+    ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{second_address}" }})')
+    time.sleep(.4)
+    # Park the pointer off the window: whatever position the previous tests left
+    # it at may sit inside it.
+    pointer(['move 1276 796', 'wait 150'])
+    time.sleep(.4)
+    hover_hidden = client()
+    assert not hover_hidden['floating'] and hover_hidden['at'][1] < 30, hover_hidden
+    capture('hover-hidden')
+    pointer(['move 640 400', 'wait 150'])
+    time.sleep(.4)
+    hover_shown = client()
+    assert hover_shown['at'][1] >= 30, (hover_hidden, hover_shown)
+    capture('hover-over-window')
+    # The bar's own band above the window must keep it up too.
+    bar_y = hover_shown['at'][1] - 15
+    pointer([f'move 640 {bar_y}', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] >= 30, client()
+    capture('hover-over-bar')
+    pointer(['move 1276 796', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] < 30, client()
+    capture('hover-left')
+    print('PASS: hover mode shows the titlebar only while the pointer is over the window or its bar', flush=True)
+
+    # workspace_tag on top of hover: the restriction applies per-layout too —
+    # an untagged tiled window stays barless under the pointer, tagging it
+    # raises its bar while hovered, and removing the tag drops it again.
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { workspace_tag = "floating-test" } } })')
+    time.sleep(.3)
+    pointer(['move 640 400', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] < 30, client()
+    capture('hover-untagged-hidden')
+    ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+floating-test", window = "address:{second_address}" }})')
+    time.sleep(.4)
+    assert client()['at'][1] >= 30, client()
+    capture('hover-tagged-shown')
+    ctl('dispatch', f'hl.dsp.window.tag({{ tag = "-floating-test", window = "address:{second_address}" }})')
+    time.sleep(.4)
+    assert client()['at'][1] < 30, client()
+    print('PASS: workspace_tag filters on top of hover per-layout mode', flush=True)
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = "false", enabled = "true", workspace_tag = "" } } })')
+    time.sleep(.3)
   finally:
     if secondary and secondary.poll() is None:
       secondary.terminate()

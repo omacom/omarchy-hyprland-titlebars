@@ -82,10 +82,13 @@ private:
 
   Time::steady_tp m_lastMouseDown{};
 
-  PHLANIMVAR<CHyprColor> m_cRealBarColor;
-
   Vector2D cursorRelativeToBar();
-
+  CBox barBand() const;
+  CBox hoverRegion() const;
+  bool isPointerOver() const;
+  void applyShownStateChange();
+  void updateHover();
+  PHLANIMVAR<CHyprColor> m_cRealBarColor;
   void renderPass(Render::CRenderContext &ctx, PHLMONITOR, float const &a);
   void renderBarTitle(const Vector2D &bufferSize, const float scale);
   void renderBarButtons(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
@@ -106,7 +109,7 @@ private:
   void keepTitlebarReachable();
   bool doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, bool BUTTONSRIGHT);
 
-  CBox assignedBoxGlobal();
+  CBox assignedBoxGlobal() const;
 
   CHyprSignalListener m_pMouseButtonCallback;
   CHyprSignalListener m_pTouchDownCallback;

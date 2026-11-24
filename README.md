@@ -25,9 +25,9 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 
 | Option | Default | Behavior |
 | --- | --- | --- |
-| `enabled` | `"false"` | Global mode: `"always"` (or `true`), `"never"` (or `false`), or `"active"` (focused windows only). When `"never"`, hides every titlebar; otherwise each layout shows bars per its `layout_<name>_enabled` mode. |
+| `enabled` | `"false"` | Global mode: `"always"` (or `true`), `"never"` (or `false`), `"active"` (focused windows only), or `"hover"` (only while the pointer is over the window or its bar). When `"never"`, hides every titlebar; otherwise each layout shows bars per its `layout_<name>_enabled` mode. Touch has no hover: on touch input, `"hover"` falls back to `"active"` until the pointer is used again. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
-| `layout_<name>_enabled` | floating `"true"`, tiled `"false"` | Per-layout mode, same values as `enabled` (`"always"`/`true`, `"never"`/`false`, `"active"`), honored only when `enabled` is not `"never"`. Defaults match upstream: floating is `"always"`, the tiled layouts (`dwindle`, `master`, `monocle`, `scrolling`) are `"never"`. Any other layout name (e.g. a custom tiled layout) also works and defaults to `"never"`. So `enabled = "true"` with no overrides gives floating-only bars, as upstream. |
+| `layout_<name>_enabled` | floating `"true"`, tiled `"false"` | Per-layout mode, same values as `enabled` (`"always"`/`true`, `"never"`/`false`, `"active"`, `"hover"`), honored only when `enabled` is not `"never"`. Defaults match upstream: floating is `"always"`, the tiled layouts (`dwindle`, `master`, `monocle`, `scrolling`) are `"never"`. Any other layout name (e.g. a custom tiled layout) also works and defaults to `"never"`. So `enabled = "true"` with no overrides gives floating-only bars, as upstream. |
 | `workspace_tag` | empty | Optional restriction applied across every layout; empty means every window in an enabled layout gets a bar. |
 ## Titles
 
