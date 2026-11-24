@@ -86,6 +86,7 @@ private:
   CBox barBand() const;
   CBox hoverRegion() const;
   bool isPointerOver() const;
+  bool withinProximity() const;
   void applyShownStateChange();
   void updateHover();
   PHLANIMVAR<CHyprColor> m_cRealBarColor;

@@ -200,6 +200,9 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CIntValue>("plugin:hyprbars:bar_button_padding", "Padding of the bar buttons", 5);
   g_pOmarchyFloatingGlobalState->config.buttonRounding =
       makeShared<Config::Values::CIntValue>("plugin:hyprbars:button_rounding", "Button corner radius. -1 preserves the upstream circular style", -1);
+  g_pOmarchyFloatingGlobalState->config.cursorProximity =
+      makeShared<Config::Values::CIntValue>("plugin:hyprbars:cursor_proximity",
+          "In active/hover mode only show the bar while the pointer is within this many pixels of the window's top; 0 disables", 0);
   g_pOmarchyFloatingGlobalState->config.buttonBorderSize =
       makeShared<Config::Values::CIntValue>("plugin:hyprbars:button_border_size", "Width of the button border", 0);
   g_pOmarchyFloatingGlobalState->config.buttonBorderColor =
@@ -243,6 +246,7 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barButtonPadding);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonRounding);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderSize);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.cursorProximity);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.enabled);
   for (const auto& [name, opt] : g_pOmarchyFloatingGlobalState->config.layoutEnabled)

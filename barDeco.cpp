@@ -135,16 +135,47 @@ bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
     return false;
   switch (combinedMode()) {
     case eHyprBarMode::NEVER: return false;
-    case eHyprBarMode::ACTIVE: return m_focused;
+    case eHyprBarMode::ACTIVE: return m_focused && withinProximity();
     case eHyprBarMode::ALWAYS: return true;
     case eHyprBarMode::HOVER:
       // Touch has no hover: while a touch gesture was the last input, fall
       // back to active mode.
       if (g_pOmarchyFloatingGlobalState->lastInputTouch)
-        return m_focused;
-      return isPointerOver();
+        return m_focused && withinProximity();
+      return isPointerOver() && withinProximity();
   }
   return false;
+}
+
+bool COmarchyFloatingHyprBar::withinProximity() const {
+  const auto PROX = g_pOmarchyFloatingGlobalState->config.cursorProximity->value();
+  // Unset (0) keeps the current behavior: no distance restriction.
+  if (PROX <= 0)
+    return true;
+
+  const auto WIN = m_pWindow.lock();
+  if (!validMapped(WIN))
+    return false;
+
+  const auto PWORKSPACE = WIN->m_workspace;
+  const auto WORKSPACEOFFSET = PWORKSPACE && !(WIN->m_state & Desktop::View::WINDOW_STATE_PINNED) ? PWORKSPACE->m_renderOffset->value() : Vector2D();
+  // Measure from a stable line at the window's top. The goal geometry is the
+  // layout position before animation, so it does not move while the bar's
+  // reservation animation settles; subtracting the window's own top
+  // reservation keeps the reference identical whether the bar is shown or
+  // hidden. The effective threshold never goes below the bar's own height +
+  // border: a small configured value must still cover the titlebar itself.
+  const auto HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
+  const auto BORDER = WIN->presentation().borderSize();
+  const double threshold = std::max<double>(static_cast<double>(PROX), static_cast<double>(HEIGHT + BORDER));
+  const auto reserved = WIN->getFullWindowReservedArea();
+  // On tiled windows the reservation shifts the window down, so it is
+  // subtracted to keep the reference stable. Floating windows do not move for
+  // their own bar, and subtracting would offset the reference by the bar
+  // height and create two overlapping bands (jitter at their borders).
+  const double reservedTop = WIN->isFloating() ? 0.0 : reserved.topLeft.y;
+  const double stableTop = WIN->position(Desktop::View::IGeometric::GEOMETRIC_GOAL).y + WIN->presentation().floatingOffset().y + WORKSPACEOFFSET.y - reservedTop;
+  return std::abs(g_pInputManager->getMouseCoordsInternal().y - stableTop) <= threshold;
 }
 
 void COmarchyFloatingHyprBar::updateFocus(PHLWINDOW activeWindow) {
@@ -171,7 +202,9 @@ void COmarchyFloatingHyprBar::updateHover() {
   // A drag keeps the bar up under the pointer, wherever the window goes.
   if (m_bDraggingThis || m_bDragPending)
     return;
-  if (combinedMode() != eHyprBarMode::HOVER)
+  // Hover always re-evaluates on motion; other modes only matter once a
+  // proximity limit is configured.
+  if (combinedMode() != eHyprBarMode::HOVER && g_pOmarchyFloatingGlobalState->config.cursorProximity->value() <= 0)
     return;
   applyShownStateChange();
 }

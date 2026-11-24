@@ -343,6 +343,29 @@ end
     time.sleep(.4)
     assert client()['at'][1] < 30, client()
     print('PASS: workspace_tag filters on top of hover per-layout mode', flush=True)
+
+    # cursor_proximity restricts active/hover to positions near the window's
+    # top; unset (0) keeps the current default behavior.
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = "active", cursor_proximity = 50, workspace_tag = "" } } })')
+    ctl('dispatch', f'hl.dsp.focus({{ window = "address:{second_address}" }})')
+    time.sleep(.3)
+    pointer(['move 640 400', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] < 30, client()
+    hidden_top = client()['at'][1]
+    pointer([f'move 640 {hidden_top + 12}', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] >= 30, client()
+    capture('proximity-shown')
+    pointer([f'move 640 {hidden_top + 250}', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] < 30, client()
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = "active", cursor_proximity = 0 } } })')
+    time.sleep(.3)
+    pointer(['move 640 400', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] >= 30, client()
+    print('PASS: cursor_proximity gates active mode on distance to top; unset restores default', flush=True)
     ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = "false", enabled = "true", workspace_tag = "" } } })')
     time.sleep(.3)
   finally:
