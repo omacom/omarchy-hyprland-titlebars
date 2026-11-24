@@ -57,6 +57,16 @@ static std::string windowLayoutName(const PHLWINDOW& window) {
   return Layout::Supplementary::algoMatcher()->getNameForTiledAlgo(tiled.get());
 }
 
+static std::string activeLayoutName(const PHLWINDOW &win) {
+  const auto workspace = win->m_workspace;
+  const auto space = workspace ? workspace->space() : nullptr;
+  const auto algo = space ? space->algorithm() : nullptr;
+  // A floating layout has no tiled targets, treat it as the "floating" layout.
+  if (algo && algo->tiledTargets() == 0)
+    return "floating";
+  return windowLayoutName(win);
+}
+
 static eHyprBarMode parseMode(const std::string& s) {
   if (s == "always" || s == "true")
     return eHyprBarMode::ALWAYS;
@@ -112,7 +122,7 @@ eHyprBarMode COmarchyFloatingHyprBar::combinedMode() const {
 
   const auto global = parseMode(g_pOmarchyFloatingGlobalState->config.enabled->value());
 
-  const auto layoutName = PWINDOW->isFloating() ? std::string("floating") : windowLayoutName(PWINDOW);
+  const auto layoutName = activeLayoutName(PWINDOW);
   if (layoutName.empty())
     return global;
 
