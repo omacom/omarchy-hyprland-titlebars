@@ -24,6 +24,12 @@ struct SOmarchyFloatingHyprButton {
   std::map<int, SP<Render::ITexture>> iconTex;
 };
 
+enum class eHyprBarMode : uint8_t {
+  NEVER,
+  ACTIVE,
+  ALWAYS,
+};
+
 class COmarchyFloatingHyprBar;
 
 struct SOmarchyFloatingGlobalState {
@@ -42,10 +48,11 @@ struct SOmarchyFloatingGlobalState {
     SP<Config::Values::CIntValue> barButtonPadding;
     SP<Config::Values::CIntValue> buttonRounding;
     SP<Config::Values::CIntValue> buttonBorderSize;
-    SP<Config::Values::CBoolValue> barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover;
+    SP<Config::Values::CBoolValue> barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, iconOnHover;
+    SP<Config::Values::CStringValue> enabled;
     struct SLayoutOption {
       std::string path, desc;
-      SP<Config::Values::CBoolValue> value;
+      SP<Config::Values::CStringValue> value;
     };
     std::map<std::string, SLayoutOption> layoutEnabled;
     SP<Config::Values::CStringValue> barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, workspaceTag;

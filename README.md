@@ -25,9 +25,9 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 
 | Option | Default | Behavior |
 | --- | --- | --- |
-| `enabled` | false | Global master switch: false hides every titlebar. When true, each layout shows bars per its `layout_<name>_enabled` override. |
+| `enabled` | `"false"` | Global mode: `"always"` (or `true`), `"never"` (or `false`), or `"active"` (focused windows only). When `"never"`, hides every titlebar; otherwise each layout shows bars per its `layout_<name>_enabled` mode. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
-| `layout_<name>_enabled` | floating true, tiled false | Per-layout override, honored only when `enabled` is true. Defaults match upstream: `layout_floating_enabled` is true, the tiled layouts (`layout_dwindle_enabled`, `layout_master_enabled`, `layout_monocle_enabled`, `layout_scrolling_enabled`) are false. Any other layout name (e.g. a custom tiled layout) also works and defaults to false. So `enabled = true` with no overrides gives floating-only bars, as upstream. |
+| `layout_<name>_enabled` | floating `"true"`, tiled `"false"` | Per-layout mode, same values as `enabled` (`"always"`/`true`, `"never"`/`false`, `"active"`), honored only when `enabled` is not `"never"`. Defaults match upstream: floating is `"always"`, the tiled layouts (`dwindle`, `master`, `monocle`, `scrolling`) are `"never"`. Any other layout name (e.g. a custom tiled layout) also works and defaults to `"never"`. So `enabled = "true"` with no overrides gives floating-only bars, as upstream. |
 | `workspace_tag` | empty | Optional restriction applied across every layout; empty means every window in an enabled layout gets a bar. |
 ## Titles
 

@@ -54,7 +54,10 @@ public:
 
   WP<COmarchyFloatingHyprBar> m_self;
 
-  bool barEnabled() const;
+  eHyprBarMode combinedMode() const;
+  bool isEffectivelyShown() const;
+  void updateFocus(PHLWINDOW activeWindow);
+  void applyActiveResize(bool shown);
 
 private:
   SBoxExtents m_seExtents;
@@ -71,6 +74,8 @@ private:
   bool m_hidden = false;
   bool m_bTitleColorChanged = false;
   bool m_bLastEnabledState = false;
+  bool m_focused = false;
+  bool m_bFloatResizedForBar = false;
   bool m_bWindowHasFocus = false;
   std::optional<CHyprColor> m_bForcedBarColor;
   std::optional<CHyprColor> m_bForcedTitleColor;
@@ -109,6 +114,7 @@ private:
 
   CHyprSignalListener m_pTouchMoveCallback;
   CHyprSignalListener m_pMouseMoveCallback;
+  CHyprSignalListener m_pFocusCallback;
 
   std::string m_szLastTitle;
 

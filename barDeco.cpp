@@ -56,6 +56,14 @@ static std::string windowLayoutName(const PHLWINDOW& window) {
     return "";
   return Layout::Supplementary::algoMatcher()->getNameForTiledAlgo(tiled.get());
 }
+
+static eHyprBarMode parseMode(const std::string& s) {
+  if (s == "always" || s == "true")
+    return eHyprBarMode::ALWAYS;
+  if (s == "active")
+    return eHyprBarMode::ACTIVE;
+  return eHyprBarMode::NEVER; // "never", "false", or unknown
+}
 static std::string windowCommand(std::string command, const PHLWINDOW &window) {
   // Resolve the decoration owner synchronously. An asynchronously spawned
   // command must not choose its target from whatever happens to be focused.
@@ -84,6 +92,9 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
   // move events
   m_pTouchMoveCallback = Event::bus()->m_events.input.touch.motion.listen([&](ITouch::SMotionEvent e, Event::SCallbackInfo &info) { onTouchMove(info, e); });
   m_pMouseMoveCallback = Event::bus()->m_events.input.mouse.move.listen([&](Vector2D c, Event::SCallbackInfo &info) { onMouseMove(c); });
+  m_pFocusCallback = Event::bus()->m_events.window.active.listen([&](PHLWINDOW w, Desktop::eFocusReason) { updateFocus(w); });
+
+  m_focused = Desktop::focusState()->window() == pWindow;
 
   Animation::mgr()->createAnimation(configColor(g_pOmarchyFloatingGlobalState->config.barColor->value()), m_cRealBarColor,
                                     Config::animationTree()->getAnimationPropertyConfig("border"), pWindow, AVARDAMAGE_NONE);
@@ -92,39 +103,67 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
 
 COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() { std::erase(g_pOmarchyFloatingGlobalState->bars, m_self); }
 
-bool COmarchyFloatingHyprBar::barEnabled() const {
+eHyprBarMode COmarchyFloatingHyprBar::combinedMode() const {
   const auto PWINDOW = m_pWindow.lock();
-  if (!PWINDOW || !g_pOmarchyFloatingGlobalState->config.enabled->value())
-    return false;
+  if (!PWINDOW)
+    return eHyprBarMode::NEVER;
+
+  const auto global = parseMode(g_pOmarchyFloatingGlobalState->config.enabled->value());
 
   const auto layoutName = PWINDOW->isFloating() ? std::string("floating") : windowLayoutName(PWINDOW);
   if (layoutName.empty())
-    return false;
+    return global;
 
-  const auto it = g_pOmarchyFloatingGlobalState->config.layoutEnabled.find(layoutName);
-  if (it != g_pOmarchyFloatingGlobalState->config.layoutEnabled.end())
-    return it->second.value->value();
+  // A layout key that is explicitly set by the user always wins, even over a
+  // global "never". Only when it is unset does the layout fall back to the
+  // global mode.
+  std::string path = "plugin:hyprbars:layout_" + layoutName + "_enabled";
+  if (const auto it = g_pOmarchyFloatingGlobalState->config.layoutEnabled.find(layoutName); it != g_pOmarchyFloatingGlobalState->config.layoutEnabled.end())
+    path = it->second.path;
 
-  // Unknown/custom layouts have no registered value; honor a user-set override
-  // read straight from the config tree, and stay off otherwise.
-  CConfigValue<Config::BOOL> override("plugin:hyprbars:layout_" + layoutName + "_enabled");
+  CConfigValue<Config::STRING> override(path);
   if (override.good() && override.setByUser())
-    return *override;
+    return parseMode(*override);
 
-  return false;
+  return global;
+}
+
+bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
+  if (m_hidden)
+    return false;
+  const auto mode = combinedMode();
+  if (mode == eHyprBarMode::NEVER)
+    return false;
+  if (mode == eHyprBarMode::ACTIVE)
+    return m_focused;
+  return true;
+}
+
+void COmarchyFloatingHyprBar::updateFocus(PHLWINDOW activeWindow) {
+  const auto focused = m_pWindow.lock() == activeWindow;
+  if (focused == m_focused)
+    return;
+  m_focused = focused;
+  if (combinedMode() == eHyprBarMode::ACTIVE) {
+    g_pDecorationPositioner->repositionDeco(this);
+    if (const auto PWINDOW = m_pWindow.lock(); PWINDOW)
+      if (const auto monitor = PWINDOW->m_monitor.lock())
+        monitor->m_scheduledRecalc = true;
+    damageEntire();
+  }
 }
 
 SDecorationPositioningInfo COmarchyFloatingHyprBar::getPositioningInfo() {
   const auto HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
-  const auto ENABLED = barEnabled();
+  const auto SHOWN = isEffectivelyShown();
   const auto PRECEDENCE = g_pOmarchyFloatingGlobalState->config.barPrecedenceOverBorder->value();
 
   SDecorationPositioningInfo info;
-  info.policy = m_hidden ? DECORATION_POSITION_ABSOLUTE : DECORATION_POSITION_STICKY;
+  info.policy = SHOWN ? DECORATION_POSITION_STICKY : DECORATION_POSITION_ABSOLUTE;
   info.edges = DECORATION_EDGE_TOP;
   info.priority = PRECEDENCE ? 10005 : 5000;
   info.reserved = true;
-  info.desiredExtents = {{0, m_hidden || !ENABLED ? 0 : HEIGHT}, {0, 0}};
+  info.desiredExtents = {{0, SHOWN ? HEIGHT : 0}, {0, 0}};
   return info;
 }
 
@@ -138,7 +177,7 @@ void COmarchyFloatingHyprBar::onPositioningReply(const SDecorationPositioningRep
 std::string COmarchyFloatingHyprBar::getDisplayName() { return "Hyprbar"; }
 
 bool COmarchyFloatingHyprBar::inputIsValid() {
-  if (m_hidden || !barEnabled())
+  if (!isEffectivelyShown())
     return false;
 
   if (g_pSeatManager->m_seatGrab && !g_pSeatManager->m_seatGrab->accepts(m_pWindow->wlSurface()->resource()))
@@ -598,14 +637,14 @@ void COmarchyFloatingHyprBar::renderBarButtonsText(Render::CRenderContext &ctx, 
 }
 
 void COmarchyFloatingHyprBar::draw(Render::CRenderContext &ctx, PHLMONITOR pMonitor, const float &a, const Render::SWindowRenderPresentation &presentation) {
-  const auto ENABLED = barEnabled();
+  const auto ENABLED = isEffectivelyShown();
 
   if (m_bLastEnabledState != ENABLED) {
     m_bLastEnabledState = ENABLED;
     g_pDecorationPositioner->repositionDeco(this);
   }
 
-  if (m_hidden || !validMapped(m_pWindow) || !ENABLED)
+  if (!validMapped(m_pWindow) || !ENABLED)
     return;
 
   const auto PWINDOW = m_pWindow.lock();
@@ -796,7 +835,7 @@ void COmarchyFloatingHyprBar::onConfigReloaded() {
 
   // Bars start disabled, so the reload that enables them has to make room for
   // them, as a change in m_hidden does.
-  const auto ENABLED = barEnabled();
+  const auto ENABLED = isEffectivelyShown();
   if (m_bLastEnabledState != ENABLED) {
     m_bLastEnabledState = ENABLED;
     if (const auto PWINDOW = m_pWindow.lock(); PWINDOW)

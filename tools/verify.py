@@ -37,7 +37,7 @@ local unconfigured = io.open("UNCONFIGURED", "r")
 if unconfigured then unconfigured:close() end
 if hl.plugin and hl.plugin.hyprbars and not unconfigured then
   hl.config({ plugin = { hyprbars = {
-    enabled = true, bar_height = 30, bar_color = "rgb(24283b)", bar_color_inactive = "rgb(1a1b26)", col = { text = "rgb(c0caf5)" },
+    enabled = "true", bar_height = 30, bar_color = "rgb(24283b)", bar_color_inactive = "rgb(1a1b26)", col = { text = "rgb(c0caf5)" },
     button_rounding = 4, bar_text_align = "left", bar_text_font = "Sans", bar_text_size = 12, bar_part_of_window = true,
     on_double_click = [[hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle", window = "address:%WINDOW%" })']],
   } } })

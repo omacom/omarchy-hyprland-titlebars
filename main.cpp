@@ -193,7 +193,8 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CIntValue>("plugin:hyprbars:button_border_size", "Width of the button border", 0);
   g_pOmarchyFloatingGlobalState->config.buttonBorderColor =
       makeShared<Config::Values::CColorValue>("plugin:hyprbars:button_border_color", "Color of the button border", 0x00000000);
-  g_pOmarchyFloatingGlobalState->config.enabled = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:enabled", "Whether bars are enabled", false);
+  g_pOmarchyFloatingGlobalState->config.enabled = makeShared<Config::Values::CStringValue>("plugin:hyprbars:enabled",
+      "Whether bars are enabled: true/always, false/never, or active (focused windows only)", "false");
   g_pOmarchyFloatingGlobalState->config.iconOnHover =
       makeShared<Config::Values::CBoolValue>("plugin:hyprbars:icon_on_hover", "Whether to use an icon on hover of the buttons", false);
   g_pOmarchyFloatingGlobalState->config.onDoubleClick =
@@ -203,14 +204,14 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   {
     auto& floating = g_pOmarchyFloatingGlobalState->config.layoutEnabled["floating"];
     floating.path  = "plugin:hyprbars:layout_floating_enabled";
-    floating.desc  = "Show titlebars on the floating layout";
-    floating.value = makeShared<Config::Values::CBoolValue>(floating.path.c_str(), floating.desc.c_str(), true);
+    floating.desc  = "Mode for the floating layout: true/always, false/never, or active";
+    floating.value = makeShared<Config::Values::CStringValue>(floating.path.c_str(), floating.desc.c_str(), "true");
   }
   for (const auto& L : {"dwindle", "master", "monocle", "scrolling"}) {
     auto& opt = g_pOmarchyFloatingGlobalState->config.layoutEnabled[L];
     opt.path       = "plugin:hyprbars:layout_" + std::string(L) + "_enabled";
-    opt.desc       = "Show titlebars on the " + std::string(L) + " layout";
-    opt.value      = makeShared<Config::Values::CBoolValue>(opt.path.c_str(), opt.desc.c_str(), false);
+    opt.desc       = "Mode for the " + std::string(L) + " layout: true/always, false/never, or active";
+    opt.value      = makeShared<Config::Values::CStringValue>(opt.path.c_str(), opt.desc.c_str(), "false");
   }
 
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barColor);
