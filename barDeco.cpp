@@ -116,17 +116,25 @@ eHyprBarMode COmarchyFloatingHyprBar::combinedMode() const {
   if (layoutName.empty())
     return global;
 
-  // A layout key that is explicitly set by the user always wins, even over a
-  // global "never". Only when it is unset does the layout fall back to the
-  // global mode.
+  // The per-layout option resolves to the user's override when they set one,
+  // otherwise to the layout's registered default (floating true, tiled
+  // false). An explicit "unset" means "inherit the global mode". A layout key
+  // set by the user always wins, even over a global "never".
   std::string path = "plugin:hyprbars:layout_" + layoutName + "_enabled";
-  if (const auto it = g_pOmarchyFloatingGlobalState->config.layoutEnabled.find(layoutName); it != g_pOmarchyFloatingGlobalState->config.layoutEnabled.end())
+  auto layoutIt = g_pOmarchyFloatingGlobalState->config.layoutEnabled.end();
+  if (const auto it = g_pOmarchyFloatingGlobalState->config.layoutEnabled.find(layoutName); it != g_pOmarchyFloatingGlobalState->config.layoutEnabled.end()) {
     path = it->second.path;
+    layoutIt = it;
+  }
 
   CConfigValue<Config::STRING> override(path);
-  if (override.good() && override.setByUser())
-    return parseMode(*override);
-
+  if (override.good()) {
+    const Config::STRING effective = override.setByUser() ? *override : layoutIt != g_pOmarchyFloatingGlobalState->config.layoutEnabled.end() ? layoutIt->second.value->value() : "";
+    if (effective == "unset")
+      return global;
+    if (!effective.empty())
+      return parseMode(effective);
+  }
   return global;
 }
 
@@ -231,10 +239,12 @@ CBox COmarchyFloatingHyprBar::barBand() const {
   // precedence, rounding); include the live assigned box when there is one.
   const auto BARASSIGNED = assignedBoxGlobal();
   if (BARASSIGNED.w > 0 && BARASSIGNED.h > 0) {
+    const double right = std::max(band.x + band.w, BARASSIGNED.x + BARASSIGNED.w);
+    const double bottom = std::max(band.y + band.h, BARASSIGNED.y + BARASSIGNED.h);
     band.x = std::min(band.x, BARASSIGNED.x);
     band.y = std::min(band.y, BARASSIGNED.y);
-    band.w = std::max(band.x + band.w, BARASSIGNED.x + BARASSIGNED.w) - band.x;
-    band.h = std::max(band.y + band.h, BARASSIGNED.y + BARASSIGNED.h) - band.y;
+    band.w = right - band.x;
+    band.h = bottom - band.y;
   }
   return band;
 }
@@ -254,10 +264,12 @@ CBox COmarchyFloatingHyprBar::hoverRegion() const {
   region.translate(WORKSPACEOFFSET);
 
   const auto BAND = barBand();
+  const double right = std::max(region.x + region.w, BAND.x + BAND.w);
+  const double bottom = std::max(region.y + region.h, BAND.y + BAND.h);
   region.x = std::min(region.x, BAND.x);
   region.y = std::min(region.y, BAND.y);
-  region.w = std::max(region.x + region.w, BAND.x + BAND.w) - region.x;
-  region.h = std::max(region.y + region.h, BAND.y + BAND.h) - region.y;
+  region.w = right - region.x;
+  region.h = bottom - region.y;
   return region;
 }
 
@@ -266,15 +278,19 @@ bool COmarchyFloatingHyprBar::isPointerOver() const {
   if (!hoverRegion().containsPoint(MOUSE))
     return false;
 
-  // The bar strip itself is this window's target even though it is not a
-  // surface the hit tester reports.
-  if (barBand().containsPoint(MOUSE))
-    return true;
-
   // Overlapping floating windows: only the topmost window under the pointer
   // counts; a covered window must not hover-show its bar.
   Desktop::CViewHitTester hitTester{*Desktop::viewState()};
-  return hitTester.windowAt(MOUSE, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING) == m_pWindow;
+  const auto TOP = hitTester.windowAt(MOUSE, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
+  if (TOP == m_pWindow)
+    return true;
+  if (TOP)
+    return false;
+
+  // The bar strip itself is this window's target even though it is not a
+  // surface the hit tester reports — but only when that point is vacant,
+  // i.e. no higher window covers our bar.
+  return barBand().containsPoint(MOUSE);
 }
 
 
