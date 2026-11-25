@@ -466,12 +466,11 @@ void COmarchyFloatingHyprBar::onTouchUp(Event::SCallbackInfo &info, ITouch::SUpE
 }
 
 void COmarchyFloatingHyprBar::onMouseMove(Vector2D coords) {
-  // Pointer position affects rendering only when a visibility mode can hide
-  // the bar, or button icons appear on hover; skip those scans otherwise.
-  if (pointerTrackingNeeded() || g_pOmarchyFloatingGlobalState->config.iconOnHover->value()) {
-    damageOnButtonHover();
+  // Button-face highlights always follow the pointer; only the visibility
+  // re-evaluation is gated to cursor-dependent modes.
+  damageOnButtonHover();
+  if (pointerTrackingNeeded())
     updateHover();
-  }
 
   if (!m_bDragPending || m_bTouchEv || !validMapped(m_pWindow) || m_touchId != 0)
     return;
