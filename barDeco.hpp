@@ -8,10 +8,11 @@
 #include <hyprland/src/render/gl/GLTexture.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/devices/ITouch.hpp>
-#include <hyprland/src/desktop/rule/windowRule/WindowRule.hpp>
-#include <hyprland/src/helpers/AnimatedVariable.hpp>
-#include <hyprland/src/helpers/time/Time.hpp>
-#include <hyprland/src/helpers/signal/Signal.hpp>
+  #include <hyprland/src/helpers/AnimatedVariable.hpp>
+  #include <hyprland/src/helpers/time/Time.hpp>
+  #include <hyprland/src/helpers/signal/Signal.hpp>
+  #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
+  #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include "globals.hpp"
 
 #define private public
@@ -77,6 +78,8 @@ private:
   mutable bool m_bHoverLatched = false;
 
   mutable std::chrono::steady_clock::time_point m_tHoverLastActive{};
+  // Fires when the hover grace period expires, to re-evaluate hiding.
+  SP<CEventLoopTimer> m_hoverTimer;
   bool m_focused = false;
   bool m_bFloatResizedForBar = false;
   bool m_bWindowHasFocus = false;
@@ -91,6 +94,9 @@ private:
   bool isPointerOver() const;
   bool isPointerOverBar() const;
   bool withinProximity() const;
+  // Keeps a latched bar visible for the documented 120ms after the pointer
+  // leaves the zone, arming the hover timer to re-evaluate when it expires.
+  bool hoverGrace() const;
   void applyShownStateChange();
   void updateHover();
   double proximityDistance() const;

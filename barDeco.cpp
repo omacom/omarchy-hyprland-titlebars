@@ -115,9 +115,20 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
   Animation::mgr()->createAnimation(configColor(g_pOmarchyFloatingGlobalState->config.barColor->value()), m_cRealBarColor,
                                     Config::animationTree()->getAnimationPropertyConfig("border"), pWindow, AVARDAMAGE_NONE);
   m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
-}
 
-COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() { std::erase(g_pOmarchyFloatingGlobalState->bars, m_self); }
+  // One-shot timer for the hover grace period: when it expires, re-evaluate
+  // whether the bar should hide.
+  m_hoverTimer = makeShared<CEventLoopTimer>(std::nullopt, [this](SP<CEventLoopTimer> self, void* data) { applyShownStateChange(); }, this);
+  g_pEventLoopManager->addTimer(m_hoverTimer);
+}
+COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() {
+  // Cancel the hover timer before the callback's `this` goes stale.
+  if (m_hoverTimer) {
+    m_hoverTimer->cancel();
+    g_pEventLoopManager->removeTimer(m_hoverTimer);
+  }
+  std::erase(g_pOmarchyFloatingGlobalState->bars, m_self);
+}
 
 eHyprBarMode COmarchyFloatingHyprBar::combinedMode() const {
   const auto PWINDOW = m_pWindow.lock();
@@ -174,7 +185,7 @@ bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
     return false;
   switch (combinedMode()) {
     case eHyprBarMode::NEVER: return false;
-    case eHyprBarMode::ACTIVE: return m_focused && isPointerOver() && withinProximity();
+    case eHyprBarMode::ACTIVE: return m_focused && isPointerOver() && (isPointerOverBar() || withinProximity());
     case eHyprBarMode::ALWAYS: return true;
     case eHyprBarMode::HOVER:
       // Touch has no hover: while a touch gesture was the last input, fall
@@ -193,22 +204,17 @@ bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
 				// to the window's top. The pointer must be over the window or bar
 				// first (hovering in the empty space above must not show).
 				if (!isPointerOver())
-				{
-					m_bHoverLatched = false;
-					return false;
-				}
+					return hoverGrace();
 				const bool inZone = isPointerOverBar() || proximityDistance() <= PROX;
 				if (inZone)
 				{
 					m_bHoverLatched = true;
 					m_tHoverLastActive = std::chrono::steady_clock::now();
+					if (m_hoverTimer)
+						m_hoverTimer->cancel();
 					return true;
 				}
-				// Hide after the pointer has been out of the bar zone for a continuous
-				// 120ms. Time-based: window relocations from showing/hiding cannot flip
-				// this test, so no geometric feedback loop exists.
-				m_bHoverLatched = false;
-				return false;
+				return hoverGrace();
 			}
 		}
 	return false;
@@ -237,12 +243,20 @@ bool COmarchyFloatingHyprBar::withinProximity() const
 	return proximityDistance() <= static_cast<double>(PROX);
 }
 
-void COmarchyFloatingHyprBar::updateFocus(PHLWINDOW activeWindow) {
-  const auto focused = m_pWindow.lock() == activeWindow;
-  if (focused == m_focused)
-    return;
-  m_focused = focused;
-  applyShownStateChange();
+bool COmarchyFloatingHyprBar::hoverGrace() const {
+  if (!m_bHoverLatched)
+    return false;
+  const auto NOW = std::chrono::steady_clock::now();
+  const auto ELAPSED = NOW - m_tHoverLastActive;
+  if (ELAPSED >= std::chrono::milliseconds(120)) {
+    m_bHoverLatched = false;
+    return false;
+  }
+  // Keep the bar up through the grace period; arm the timer to re-evaluate
+  // when it expires (also covers the case of no further mouse motion).
+  if (m_hoverTimer)
+    m_hoverTimer->updateTimeout(std::chrono::milliseconds(120) - ELAPSED);
+  return true;
 }
 
 void COmarchyFloatingHyprBar::applyShownStateChange() {
@@ -256,6 +270,15 @@ void COmarchyFloatingHyprBar::applyShownStateChange() {
       monitor->m_scheduledRecalc = true;
   damageEntire();
 }
+
+void COmarchyFloatingHyprBar::updateFocus(PHLWINDOW activeWindow) {
+  const auto focused = m_pWindow.lock() == activeWindow;
+  if (focused == m_focused)
+    return;
+  m_focused = focused;
+  applyShownStateChange();
+}
+
 void COmarchyFloatingHyprBar::updateHover() {
   // A drag keeps the bar up under the pointer, wherever the window goes.
   if (m_bDraggingThis || m_bDragPending)
@@ -338,6 +361,11 @@ bool COmarchyFloatingHyprBar::isPointerOver() const {
 		winBox = {WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x + WIN->presentation().floatingOffset().x,
 							WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y + WIN->presentation().floatingOffset().y,
 							WIN->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x, WIN->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y};
+		// Match hoverRegion(): slide with the workspace during workspace
+		// transitions. Pinned windows stay fixed.
+		const auto PWORKSPACE = WIN->m_workspace;
+		const auto WORKSPACEOFFSET = PWORKSPACE && !(WIN->m_state & Desktop::View::WINDOW_STATE_PINNED) ? PWORKSPACE->m_renderOffset->value() : Vector2D();
+		winBox.translate(WORKSPACEOFFSET);
 	}
 	const bool insideWindow = winBox.containsPoint(MOUSE);
 	const bool onDrawnBar = assignedBoxGlobal().containsPoint(MOUSE);
