@@ -718,6 +718,13 @@ static std::vector<size_t> fitVisibleButtonIndices(const PHLWINDOW &win, float a
   }
   return out;
 }
+static float visibleButtonsWidth(const PHLWINDOW &win) {
+  float width = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
+  for (const size_t i : visibleButtonIndices(win))
+    width += g_pOmarchyFloatingGlobalState->buttons[i].size + g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
+  return width;
+}
+
 
 bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS,
                                             const bool BUTTONSRIGHT) {
@@ -752,10 +759,7 @@ void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const f
   const auto BARPADDING = g_pOmarchyFloatingGlobalState->config.barPadding->value();
   const auto BARBUTTONPADDING = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
 
-  float buttonSizes = BARBUTTONPADDING;
-  for (const size_t i : visibleButtonIndices(m_pWindow.lock())) {
-    buttonSizes += g_pOmarchyFloatingGlobalState->buttons[i].size + BARBUTTONPADDING;
-  }
+  float buttonSizes = visibleButtonsWidth(m_pWindow.lock());
 
   const int scaledSize = std::round(SIZE * scale);
   const auto scaledButtonsSize = buttonSizes * scale;
@@ -1017,8 +1021,11 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
   // The title is rendered at the monitor's scale. A window dragged between
   // monitors of different scales is drawn on each, so one texture is kept per
   // scale; otherwise the title shows at the other monitor's size.
-  if (m_szLastTitle != title || m_bWindowSizeChanged || m_bTitleColorChanged)
+  const float visibleButtonsW = visibleButtonsWidth(PWINDOW);
+  if (m_szLastTitle != title || m_bWindowSizeChanged || m_bTitleColorChanged || m_fCachedTitleButtonsWidth != visibleButtonsW) {
     m_titleTexByScale.clear();
+    m_fCachedTitleButtonsWidth = visibleButtonsW;
+  }
   if (ENABLETITLE) {
     m_szLastTitle = title;
     auto &tex = m_titleTexByScale[static_cast<int>(std::round(pMonitor->m_scale * 100))];
@@ -1044,10 +1051,7 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     const auto BARBUTTONPADDING = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
     const auto ALIGN = g_pOmarchyFloatingGlobalState->config.barTextAlign->value();
 
-    float buttonSizes = BARBUTTONPADDING;
-    for (auto &b : g_pOmarchyFloatingGlobalState->buttons) {
-      buttonSizes += b.size + BARBUTTONPADDING;
-    }
+    const float buttonSizes = visibleButtonsWidth(PWINDOW);
 
     const auto scaledBorderSize = PWINDOW->presentation().borderSize() * pMonitor->m_scale;
     const auto scaledButtonsSize = buttonSizes * pMonitor->m_scale;

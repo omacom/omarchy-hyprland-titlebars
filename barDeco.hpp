@@ -126,6 +126,10 @@ private:
   CHyprSignalListener m_pFocusCallback;
 
   std::string m_szLastTitle;
+  // Filtered button width used when the title texture was built; a change
+  // (e.g. a tag flip hiding/showing the minimize button) invalidates it.
+  float m_fCachedTitleButtonsWidth = -1.f;
+
 
   bool m_bDraggingThis = false;
   bool m_bTouchEv = false;
