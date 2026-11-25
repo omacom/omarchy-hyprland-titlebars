@@ -8,10 +8,10 @@
 #include <hyprland/src/render/gl/GLTexture.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/devices/ITouch.hpp>
-  #include <hyprland/src/helpers/AnimatedVariable.hpp>
-  #include <hyprland/src/helpers/time/Time.hpp>
-  #include <hyprland/src/helpers/signal/Signal.hpp>
-  #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
+#include <hyprland/src/helpers/AnimatedVariable.hpp>
+#include <hyprland/src/helpers/time/Time.hpp>
+#include <hyprland/src/helpers/signal/Signal.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include "globals.hpp"
 
 #define private public
@@ -130,7 +130,6 @@ private:
   // (e.g. a tag flip hiding/showing the minimize button) invalidates it.
   float m_fCachedTitleButtonsWidth = -1.f;
 
-
   bool m_bDraggingThis = false;
   bool m_bTouchEv = false;
   bool m_bDragPending = false;
@@ -142,8 +141,6 @@ private:
 
   // for dynamic updates
   int m_iLastHeight = 0;
-
-
 
   friend class COmarchyFloatingBarPassElement;
 };

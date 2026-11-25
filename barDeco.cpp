@@ -59,7 +59,6 @@ static std::string windowLayoutName(const PHLWINDOW& window) {
     return "";
   return Layout::Supplementary::algoMatcher()->getNameForTiledAlgo(tiled.get());
 }
-
 static std::string activeLayoutName(const PHLWINDOW &win) {
 	// The workspace API does not expose a reliable "floating layout" name (a
 	// floating workspace still carries the default tiled algorithm), so the
@@ -71,14 +70,31 @@ static std::string activeLayoutName(const PHLWINDOW &win) {
 	return windowLayoutName(win);
 }
 
-static eHyprBarMode parseMode(const std::string& s) {
-  if (s == "always" || s == "true")
-    return eHyprBarMode::ALWAYS;
+// Visibility limiter (plugin:hyprbars:show_mode): empty/unset means always;
+// only "active"/"hover" restrict when a bar is drawn.
+static eHyprBarMode parseShowMode(const std::string& s) {
   if (s == "active")
     return eHyprBarMode::ACTIVE;
   if (s == "hover")
     return eHyprBarMode::HOVER;
-  return eHyprBarMode::NEVER; // "never", "false", or unknown
+  return eHyprBarMode::ALWAYS;
+}
+
+// True when show_mode_cursor_proximity is explicitly configured. While it is
+// left unset, "active" mode simply follows focus and needs no pointer
+// tracking; once set (including an explicit 0) both modes gate on the pointer
+// being over the window.
+static bool proximityConfigured() {
+    return CConfigValue<Config::INTEGER>("plugin:hyprbars:show_mode_cursor_proximity").setByUser();
+}
+
+// The pointer position only needs tracking when a visibility mode can hide a
+// bar, or button icons appear on hover; otherwise mouse motion does no scan.
+static bool pointerTrackingNeeded() {
+    const auto& mode = g_pOmarchyFloatingGlobalState->config.showMode->value();
+    if (mode == "hover")
+        return true;
+    return mode == "active" && proximityConfigured();
 }
 static std::string windowCommand(std::string command, const PHLWINDOW &window) {
   // Resolve the decoration owner synchronously. An asynchronously spawned
@@ -126,49 +142,26 @@ eHyprBarMode COmarchyFloatingHyprBar::combinedMode() const {
   if (!PWINDOW)
     return eHyprBarMode::NEVER;
 
-  const auto global = parseMode(g_pOmarchyFloatingGlobalState->config.enabled->value());
-
   const auto layoutName = activeLayoutName(PWINDOW);
-  if (layoutName.empty())
-    return global;
 
-  // The per-layout option resolves to the user's override when they set one,
-  // otherwise to the layout's registered default (floating true, tiled
-  // false). An explicit "unset" means "inherit the global mode". A layout key
-  // set by the user always wins, even over a global "never".
-  std::string path = "plugin:hyprbars:layout_" + layoutName + "_enabled";
-  auto layoutIt = g_pOmarchyFloatingGlobalState->config.layoutEnabled.end();
-  if (const auto it = g_pOmarchyFloatingGlobalState->config.layoutEnabled.find(layoutName); it != g_pOmarchyFloatingGlobalState->config.layoutEnabled.end()) {
-    path = it->second.path;
-    layoutIt = it;
+  // An explicitly configured per-layout option always overrides the global
+  // enabled switch: true shows bars on that layout even when the plugin is
+  // disabled globally, false hides them even when it is enabled.
+  if (!layoutName.empty()) {
+    CConfigValue<Config::BOOL> override("plugin:hyprbars:layout_" + layoutName + "_enabled");
+    if (override.good() && override.setByUser()) {
+      if (!*override)
+        return eHyprBarMode::NEVER;
+      return parseShowMode(g_pOmarchyFloatingGlobalState->config.showMode->value());
+    }
   }
 
-  CConfigValue<Config::STRING> override(path);
-  // When the user has not configured hyprbars at all, the registered layout
-  // defaults must not kick in either: an unconfigured plugin draws nothing.
-  // Configuring the global mode or this layout enables the default semantics.
-  CConfigValue<Config::STRING> enabledOpt("plugin:hyprbars:enabled");
-  const bool configured = enabledOpt.setByUser() || (override.good() && override.setByUser());
-  if (!configured)
-    return global;
+  // Upstream master switch: off means no bars anywhere (unless a layout
+  // override above said otherwise).
+  if (!g_pOmarchyFloatingGlobalState->config.enabled->value())
+    return eHyprBarMode::NEVER;
 
-  if (override.good()) {
-    // A floating window in a mixed workspace uses its active layout's mode
-    // when that layout is explicitly configured; otherwise it falls back to
-    // the global mode instead of the layout's registered default, so it
-    // never loses its titlebar to an unset tiled default.
-    const bool userSet = override.setByUser();
-    Config::STRING effective;
-    if (userSet)
-      effective = *override;
-    else if (layoutIt != g_pOmarchyFloatingGlobalState->config.layoutEnabled.end() && !PWINDOW->isFloating())
-      effective = layoutIt->second.value->value();
-    if (effective == "unset")
-      return global;
-    if (!effective.empty())
-      return parseMode(effective);
-  }
-  return global;
+  return parseShowMode(g_pOmarchyFloatingGlobalState->config.showMode->value());
 }
 
 bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
@@ -176,19 +169,24 @@ bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
     return false;
   switch (combinedMode()) {
     case eHyprBarMode::NEVER: return false;
-    case eHyprBarMode::ACTIVE: return m_focused && isPointerOver() && (isPointerOverBar() || withinProximity());
+    case eHyprBarMode::ACTIVE:
+      // Without an explicit proximity limit, active shows on the focused
+      // window only, with no pointer tracking.
+      if (!proximityConfigured())
+        return m_focused;
+      return m_focused && isPointerOver() && (isPointerOverBar() || withinProximity());
     case eHyprBarMode::ALWAYS: return true;
     case eHyprBarMode::HOVER:
       // Touch has no hover: while a touch gesture was the last input, fall
       // back to active mode.
       if (g_pOmarchyFloatingGlobalState->lastInputTouch)
-        return m_focused && withinProximity();
+        return proximityConfigured() ? (m_focused && withinProximity()) : m_focused;
 			{
 				// Dragging keeps the bar up wherever the window goes; pointer-anchored
 				// hiding would fire while the window moves under the cursor.
 				if (m_bDraggingThis || m_bDragPending)
 					return true;
-				const double PROX = g_pOmarchyFloatingGlobalState->config.cursorProximity->value();
+				const double PROX = g_pOmarchyFloatingGlobalState->config.showModeCursorProximity->value();
 				if (PROX <= 0)
 					return isPointerOver();
 				// Show/hide transition on one quantity: d = distance from the cursor
@@ -229,13 +227,12 @@ double COmarchyFloatingHyprBar::proximityDistance() const
 
 bool COmarchyFloatingHyprBar::withinProximity() const
 {
-	const auto PROX = g_pOmarchyFloatingGlobalState->config.cursorProximity->value();
+	const auto PROX = g_pOmarchyFloatingGlobalState->config.showModeCursorProximity->value();
 	// Unset (0) keeps the current behavior: no distance restriction.
 	if (PROX <= 0)
 		return true;
 	return proximityDistance() <= static_cast<double>(PROX);
 }
-
 
 void COmarchyFloatingHyprBar::applyShownStateChange() {
   const auto ENABLED = isEffectivelyShown();
@@ -261,9 +258,9 @@ void COmarchyFloatingHyprBar::updateHover() {
   // A drag keeps the bar up under the pointer, wherever the window goes.
   if (m_bDraggingThis || m_bDragPending)
     return;
-  // Hover always re-evaluates on motion; other modes only matter once a
-  // proximity limit is configured.
-  if (combinedMode() != eHyprBarMode::HOVER && g_pOmarchyFloatingGlobalState->config.cursorProximity->value() <= 0)
+  // Modes that gate on the pointer (active/hover) re-evaluate on motion;
+  // always-visible bars never need to.
+  if (combinedMode() == eHyprBarMode::ALWAYS)
     return;
   applyShownStateChange();
 }
@@ -469,14 +466,15 @@ void COmarchyFloatingHyprBar::onTouchUp(Event::SCallbackInfo &info, ITouch::SUpE
 }
 
 void COmarchyFloatingHyprBar::onMouseMove(Vector2D coords) {
-  // Hovered buttons are highlighted, so redraw when the pointer moves between
-  // them, also with hardware cursors.
-  damageOnButtonHover();
-  updateHover();
+  // Pointer position affects rendering only when a visibility mode can hide
+  // the bar, or button icons appear on hover; skip those scans otherwise.
+  if (pointerTrackingNeeded() || g_pOmarchyFloatingGlobalState->config.iconOnHover->value()) {
+    damageOnButtonHover();
+    updateHover();
+  }
 
   if (!m_bDragPending || m_bTouchEv || !validMapped(m_pWindow) || m_touchId != 0)
     return;
-
   m_bDragPending = false;
   handleMovement();
 }
@@ -725,7 +723,6 @@ static float visibleButtonsWidth(const PHLWINDOW &win) {
   return width;
 }
 
-
 bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS,
                                             const bool BUTTONSRIGHT) {
   const auto win = m_pWindow.lock();
@@ -748,7 +745,6 @@ bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::
   }
   return false;
 }
-
 
 void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const float scale) {
   const auto COLORVAL = g_pOmarchyFloatingGlobalState->config.textColor->value();
@@ -775,8 +771,6 @@ void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const f
   const CHyprColor COLOR = m_bForcedTitleColor.value_or(configColor(COLORVAL));
   m_pTextTex = g_pHyprRenderer->renderText(m_szLastTitle, COLOR, scaledSize, false, FONT, maxWidth, WEIGHT.m_value);
 }
-
-
 
 void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a) {
   const auto BARBUTTONPADDING = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();

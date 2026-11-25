@@ -487,9 +487,9 @@ local function titlebars()
   hl.config({
     plugin = {
       hyprbars = {
-        enabled = "true",
-        layout_dwindle_enabled = "true",
-        layout_scrolling_enabled = "true",
+        enabled = true,
+        layout_dwindle_enabled = true,
+        layout_scrolling_enabled = true,
         bar_height = 30,
         bar_color = colors.titlebar,
         col = { text = colors.foreground },

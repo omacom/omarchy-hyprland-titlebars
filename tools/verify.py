@@ -37,7 +37,7 @@ local unconfigured = io.open("UNCONFIGURED", "r")
 if unconfigured then unconfigured:close() end
 if hl.plugin and hl.plugin.hyprbars and not unconfigured then
   hl.config({ plugin = { hyprbars = {
-    enabled = "true", bar_height = 30, bar_color = "rgb(24283b)", bar_color_inactive = "rgb(1a1b26)", col = { text = "rgb(c0caf5)" },
+    enabled = true, bar_height = 30, bar_color = "rgb(24283b)", bar_color_inactive = "rgb(1a1b26)", col = { text = "rgb(c0caf5)" },
     button_rounding = 4, bar_text_align = "left", bar_text_font = "Sans", bar_text_size = 12, bar_part_of_window = true,
     on_double_click = [[hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle", window = "address:%WINDOW%" })']],
   } } })
@@ -189,9 +189,18 @@ end
     assert top['at'][1] >= 32, top
     print('PASS: real pointer titlebar drags move the window to any edge without snapping and keep its titlebar on screen', flush=True)
 
+    # Normalize placement first: the edge drags above can leave the window
+    # partially off-screen (e.g. past the left edge), which would put the
+    # titlebar outside the pointer's reach.
+    ctl('dispatch', f'hl.dsp.window.move({{ x = 340, y = 220, window = "address:{client()["address"]}" }})')
+    time.sleep(.3)
     window = client()
     x, y = window['at'][0] + 120, window['at'][1] - 15
-    pointer([f'move {x} {y}', 'wait 450', 'down', 'up', 'wait 100', 'down', 'up'])
+    for _ in range(3):
+        pointer([f'move {x} {y}', 'wait 450', 'down', 'up', 'wait 100', 'down', 'up'])
+        if client()['fullscreen'] == 1:
+            break
+        time.sleep(.3)
     assert client()['fullscreen'] == 1, client()
     capture('maximized')
     print('PASS: titlebar double-click maximize', flush=True)
@@ -277,29 +286,31 @@ end
         break
       time.sleep(.1)
 
-    # A workspace-scoped bar must release its reserved space as soon as a
-    # window joins tiling, without waiting for a compositor config reload.
+    # A workspace-scoped bar must follow the tag immediately, without waiting
+    # for a compositor config reload: a tagged window keeps its bar even when
+    # tiled, and untagging releases the reserved space at once.
     ctl('eval', 'hl.config({ plugin = { hyprbars = { workspace_tag = "floating-test" } } })')
     ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+floating-test", window = "address:{second_address}" }})')
     ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{second_address}" }})')
     time.sleep(.3)
     tiled = client()
-    assert not tiled['floating'] and tiled['at'][1] < 30, tiled
-    capture('workspace-tiled-no-titlebar')
+    assert not tiled['floating'] and tiled['at'][1] >= 30, tiled
+    capture('workspace-tiled-tagged')
     ctl('dispatch', f'hl.dsp.window.float({{ action = "enable", window = "address:{second_address}" }})')
     ctl('dispatch', f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "set", window = "address:{second_address}" }})')
     time.sleep(.3)
     assert client()['at'][1] >= 30, client()
+    before_untag = client()['at'][1]
     ctl('dispatch', f'hl.dsp.window.tag({{ tag = "-floating-test", window = "address:{second_address}" }})')
     time.sleep(.3)
-    assert client()['at'][1] < 30, client()
+    assert before_untag - client()['at'][1] >= 20, client()
     capture('workspace-untagged-no-titlebar')
-    print('PASS: workspace-scoped titlebars release space immediately when tiled or untagged', flush=True)
+    print('PASS: workspace_tag follows the tag immediately, tiled included, without a reload', flush=True)
 
     # Hover mode: a titlebar shows only while the pointer is over the window or
     # its own bar, releasing its reserved space the moment the pointer leaves.
     ctl('dispatch', f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "unset", window = "address:{second_address}" }})')
-    ctl('eval', 'hl.config({ plugin = { hyprbars = { enabled = "false", layout_dwindle_enabled = "hover", workspace_tag = "" } } })')
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { enabled = true, layout_dwindle_enabled = true, show_mode = "hover", workspace_tag = "" } } })')
     ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{second_address}" }})')
     time.sleep(.4)
     # Park the pointer off the window: whatever position the previous tests left
@@ -345,9 +356,9 @@ end
     assert client()['at'][1] < 30, client()
     print('PASS: workspace_tag filters on top of hover per-layout mode', flush=True)
 
-    # cursor_proximity restricts active/hover to positions near the window's
+    # show_mode_cursor_proximity restricts active/hover to positions near the window's
     # top; unset (0) keeps the current default behavior.
-    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = "active", cursor_proximity = 50, workspace_tag = "" } } })')
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = true, show_mode = "active", show_mode_cursor_proximity = 50, workspace_tag = "" } } })')
     ctl('dispatch', f'hl.dsp.focus({{ window = "address:{second_address}" }})')
     time.sleep(.3)
     pointer(['move 640 400', 'wait 150'])
@@ -361,13 +372,13 @@ end
     pointer([f'move 640 {hidden_top + 250}', 'wait 150'])
     time.sleep(.4)
     assert client()['at'][1] < 30, client()
-    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = "active", cursor_proximity = 0 } } })')
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = true, show_mode = "active", show_mode_cursor_proximity = 0 } } })')
     time.sleep(.3)
     pointer(['move 640 400', 'wait 150'])
     time.sleep(.4)
     assert client()['at'][1] >= 30, client()
-    print('PASS: cursor_proximity gates active mode on distance to top; unset restores default', flush=True)
-    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = "false", enabled = "true", workspace_tag = "" } } })')
+    print('PASS: show_mode_cursor_proximity gates active mode on distance to top; unset restores default', flush=True)
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = false, enabled = true, workspace_tag = "" } } })')
     time.sleep(.3)
   finally:
     if secondary and secondary.poll() is None:

@@ -200,15 +200,17 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CIntValue>("plugin:hyprbars:bar_button_padding", "Padding of the bar buttons", 5);
   g_pOmarchyFloatingGlobalState->config.buttonRounding =
       makeShared<Config::Values::CIntValue>("plugin:hyprbars:button_rounding", "Button corner radius. -1 preserves the upstream circular style", -1);
-  g_pOmarchyFloatingGlobalState->config.cursorProximity =
-      makeShared<Config::Values::CIntValue>("plugin:hyprbars:cursor_proximity",
+  g_pOmarchyFloatingGlobalState->config.showModeCursorProximity =
+      makeShared<Config::Values::CIntValue>("plugin:hyprbars:show_mode_cursor_proximity",
           "In active/hover mode only show the bar while the pointer is within this many pixels of the window's top; 0 disables", 0);
   g_pOmarchyFloatingGlobalState->config.buttonBorderSize =
       makeShared<Config::Values::CIntValue>("plugin:hyprbars:button_border_size", "Width of the button border", 0);
   g_pOmarchyFloatingGlobalState->config.buttonBorderColor =
       makeShared<Config::Values::CColorValue>("plugin:hyprbars:button_border_color", "Color of the button border", 0x00000000);
-  g_pOmarchyFloatingGlobalState->config.enabled = makeShared<Config::Values::CStringValue>("plugin:hyprbars:enabled",
-      "Whether bars are enabled: true/always, false/never, active (focused windows only), or hover (pointer over the window)", "false");
+  g_pOmarchyFloatingGlobalState->config.enabled = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:enabled", "Whether bars are enabled", false);
+  g_pOmarchyFloatingGlobalState->config.showMode =
+      makeShared<Config::Values::CStringValue>("plugin:hyprbars:show_mode",
+          "When to show bars: \"active\" (focused windows only) or \"hover\" (pointer over the window or its bar); unset shows them always", "");
   g_pOmarchyFloatingGlobalState->config.iconOnHover =
       makeShared<Config::Values::CBoolValue>("plugin:hyprbars:icon_on_hover", "Whether to use an icon on hover of the buttons", false);
   g_pOmarchyFloatingGlobalState->config.onDoubleClick =
@@ -218,14 +220,14 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   {
     auto& floating = g_pOmarchyFloatingGlobalState->config.layoutEnabled["floating"];
     floating.path  = "plugin:hyprbars:layout_floating_enabled";
-    floating.desc  = "Mode for the floating layout: true/always, false/never, active, or hover";
-    floating.value = makeShared<Config::Values::CStringValue>(floating.path.c_str(), floating.desc.c_str(), "true");
+    floating.desc  = "Whether titlebars are drawn on the floating layout";
+    floating.value = makeShared<Config::Values::CBoolValue>(floating.path.c_str(), floating.desc.c_str(), true);
   }
   for (const auto& L : {"dwindle", "master", "monocle", "scrolling"}) {
     auto& opt = g_pOmarchyFloatingGlobalState->config.layoutEnabled[L];
     opt.path       = "plugin:hyprbars:layout_" + std::string(L) + "_enabled";
-    opt.desc       = "Mode for the " + std::string(L) + " layout: true/always, false/never, active, or hover";
-    opt.value      = makeShared<Config::Values::CStringValue>(opt.path.c_str(), opt.desc.c_str(), "false");
+    opt.desc       = "Whether titlebars are drawn on the " + std::string(L) + " layout";
+    opt.value      = makeShared<Config::Values::CBoolValue>(opt.path.c_str(), opt.desc.c_str(), false);
   }
   {
     auto& opt = g_pOmarchyFloatingGlobalState->config.layoutMinimizeButtonEnabled["floating"];
@@ -233,7 +235,6 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
     opt.desc = "Show the minimize button on the floating layout";
     opt.value = makeShared<Config::Values::CBoolValue>(opt.path.c_str(), opt.desc.c_str(), true);
   }
-
 
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.textColor);
@@ -253,9 +254,10 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barButtonPadding);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonRounding);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderSize);
-  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.cursorProximity);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.showModeCursorProximity);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.enabled);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.showMode);
   for (const auto& [name, opt] : g_pOmarchyFloatingGlobalState->config.layoutEnabled)
     HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, opt.value);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.workspaceTag);
