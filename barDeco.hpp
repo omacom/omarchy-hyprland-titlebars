@@ -80,6 +80,9 @@ private:
   mutable std::chrono::steady_clock::time_point m_tHoverLastActive{};
   // Fires when the hover grace period expires, to re-evaluate hiding.
   SP<CEventLoopTimer> m_hoverTimer;
+  // True while the grace timer is armed; guards against re-arming on every
+  // shown-state evaluation (which would reschedule the timer in a hot loop).
+  mutable bool m_bHoverTimerArmed = false;
   bool m_focused = false;
   bool m_bFloatResizedForBar = false;
   bool m_bWindowHasFocus = false;

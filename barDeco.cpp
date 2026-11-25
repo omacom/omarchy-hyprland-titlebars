@@ -210,8 +210,10 @@ bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
 				{
 					m_bHoverLatched = true;
 					m_tHoverLastActive = std::chrono::steady_clock::now();
-					if (m_hoverTimer)
+					if (m_hoverTimer) {
 						m_hoverTimer->cancel();
+						m_bHoverTimerArmed = false;
+					}
 					return true;
 				}
 				return hoverGrace();
@@ -250,12 +252,17 @@ bool COmarchyFloatingHyprBar::hoverGrace() const {
   const auto ELAPSED = NOW - m_tHoverLastActive;
   if (ELAPSED >= std::chrono::milliseconds(120)) {
     m_bHoverLatched = false;
+    m_bHoverTimerArmed = false;
     return false;
   }
   // Keep the bar up through the grace period; arm the timer to re-evaluate
   // when it expires (also covers the case of no further mouse motion).
-  if (m_hoverTimer)
+  // Arm only once: re-arming on every evaluation (which happens per frame
+  // and per show-check) reschedules the timer in a hot loop.
+  if (m_hoverTimer && !m_bHoverTimerArmed) {
     m_hoverTimer->updateTimeout(std::chrono::milliseconds(120) - ELAPSED);
+    m_bHoverTimerArmed = true;
+  }
   return true;
 }
 
