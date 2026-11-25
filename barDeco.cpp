@@ -116,17 +116,8 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
                                     Config::animationTree()->getAnimationPropertyConfig("border"), pWindow, AVARDAMAGE_NONE);
   m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
 
-  // One-shot timer for the hover grace period: when it expires, re-evaluate
-  // whether the bar should hide.
-  m_hoverTimer = makeShared<CEventLoopTimer>(std::nullopt, [this](SP<CEventLoopTimer> self, void* data) { applyShownStateChange(); }, this);
-  g_pEventLoopManager->addTimer(m_hoverTimer);
 }
 COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() {
-  // Cancel the hover timer before the callback's `this` goes stale.
-  if (m_hoverTimer) {
-    m_hoverTimer->cancel();
-    g_pEventLoopManager->removeTimer(m_hoverTimer);
-  }
   std::erase(g_pOmarchyFloatingGlobalState->bars, m_self);
 }
 
@@ -204,19 +195,19 @@ bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
 				// to the window's top. The pointer must be over the window or bar
 				// first (hovering in the empty space above must not show).
 				if (!isPointerOver())
-					return hoverGrace();
+				{
+					m_bHoverLatched = false;
+					return false;
+				}
 				const bool inZone = isPointerOverBar() || proximityDistance() <= PROX;
 				if (inZone)
 				{
 					m_bHoverLatched = true;
-					m_tHoverLastActive = std::chrono::steady_clock::now();
-					if (m_hoverTimer) {
-						m_hoverTimer->cancel();
-						m_bHoverTimerArmed = false;
-					}
 					return true;
 				}
-				return hoverGrace();
+				// Hide immediately outside the zone.
+				m_bHoverLatched = false;
+				return false;
 			}
 		}
 	return false;
@@ -245,26 +236,6 @@ bool COmarchyFloatingHyprBar::withinProximity() const
 	return proximityDistance() <= static_cast<double>(PROX);
 }
 
-bool COmarchyFloatingHyprBar::hoverGrace() const {
-  if (!m_bHoverLatched)
-    return false;
-  const auto NOW = std::chrono::steady_clock::now();
-  const auto ELAPSED = NOW - m_tHoverLastActive;
-  if (ELAPSED >= std::chrono::milliseconds(120)) {
-    m_bHoverLatched = false;
-    m_bHoverTimerArmed = false;
-    return false;
-  }
-  // Keep the bar up through the grace period; arm the timer to re-evaluate
-  // when it expires (also covers the case of no further mouse motion).
-  // Arm only once: re-arming on every evaluation (which happens per frame
-  // and per show-check) reschedules the timer in a hot loop.
-  if (m_hoverTimer && !m_bHoverTimerArmed) {
-    m_hoverTimer->updateTimeout(std::chrono::milliseconds(120) - ELAPSED);
-    m_bHoverTimerArmed = true;
-  }
-  return true;
-}
 
 void COmarchyFloatingHyprBar::applyShownStateChange() {
   const auto ENABLED = isEffectivelyShown();

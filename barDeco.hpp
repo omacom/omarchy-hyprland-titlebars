@@ -11,7 +11,6 @@
   #include <hyprland/src/helpers/AnimatedVariable.hpp>
   #include <hyprland/src/helpers/time/Time.hpp>
   #include <hyprland/src/helpers/signal/Signal.hpp>
-  #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
   #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include "globals.hpp"
 
@@ -77,12 +76,6 @@ private:
   bool m_bLastEnabledState = false;
   mutable bool m_bHoverLatched = false;
 
-  mutable std::chrono::steady_clock::time_point m_tHoverLastActive{};
-  // Fires when the hover grace period expires, to re-evaluate hiding.
-  SP<CEventLoopTimer> m_hoverTimer;
-  // True while the grace timer is armed; guards against re-arming on every
-  // shown-state evaluation (which would reschedule the timer in a hot loop).
-  mutable bool m_bHoverTimerArmed = false;
   bool m_focused = false;
   bool m_bFloatResizedForBar = false;
   bool m_bWindowHasFocus = false;
@@ -97,9 +90,6 @@ private:
   bool isPointerOver() const;
   bool isPointerOverBar() const;
   bool withinProximity() const;
-  // Keeps a latched bar visible for the documented 120ms after the pointer
-  // leaves the zone, arming the hover timer to re-evaluate when it expires.
-  bool hoverGrace() const;
   void applyShownStateChange();
   void updateHover();
   double proximityDistance() const;
