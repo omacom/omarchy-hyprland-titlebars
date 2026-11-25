@@ -174,7 +174,7 @@ bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
     return false;
   switch (combinedMode()) {
     case eHyprBarMode::NEVER: return false;
-    case eHyprBarMode::ACTIVE: return m_focused && withinProximity();
+    case eHyprBarMode::ACTIVE: return m_focused && isPointerOver() && withinProximity();
     case eHyprBarMode::ALWAYS: return true;
     case eHyprBarMode::HOVER:
       // Touch has no hover: while a touch gesture was the last input, fall
