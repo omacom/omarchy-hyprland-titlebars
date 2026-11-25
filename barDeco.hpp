@@ -74,6 +74,9 @@ private:
   bool m_hidden = false;
   bool m_bTitleColorChanged = false;
   bool m_bLastEnabledState = false;
+  mutable bool m_bHoverLatched = false;
+
+  mutable std::chrono::steady_clock::time_point m_tHoverLastActive{};
   bool m_focused = false;
   bool m_bFloatResizedForBar = false;
   bool m_bWindowHasFocus = false;
@@ -86,9 +89,12 @@ private:
   CBox barBand() const;
   CBox hoverRegion() const;
   bool isPointerOver() const;
+  bool isPointerOverBar() const;
   bool withinProximity() const;
   void applyShownStateChange();
   void updateHover();
+  double proximityDistance() const;
+
   PHLANIMVAR<CHyprColor> m_cRealBarColor;
   void renderPass(Render::CRenderContext &ctx, PHLMONITOR, float const &a);
   void renderBarTitle(const Vector2D &bufferSize, const float scale);

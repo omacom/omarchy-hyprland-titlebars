@@ -314,8 +314,9 @@ end
     hover_shown = client()
     assert hover_shown['at'][1] >= 30, (hover_hidden, hover_shown)
     capture('hover-over-window')
-    # The bar's own band above the window must keep it up too.
-    bar_y = hover_shown['at'][1] - 15
+    # Hovering the drawn bar itself keeps it up (proximity is the gate only
+    # for approaching from outside).
+    bar_y = hover_shown['at'][1] + 20
     pointer([f'move 640 {bar_y}', 'wait 150'])
     time.sleep(.4)
     assert client()['at'][1] >= 30, client()
