@@ -753,8 +753,8 @@ void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const f
   const auto BARBUTTONPADDING = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
 
   float buttonSizes = BARBUTTONPADDING;
-  for (auto &b : g_pOmarchyFloatingGlobalState->buttons) {
-    buttonSizes += b.size + BARBUTTONPADDING;
+  for (const size_t i : visibleButtonIndices(m_pWindow.lock())) {
+    buttonSizes += g_pOmarchyFloatingGlobalState->buttons[i].size + BARBUTTONPADDING;
   }
 
   const int scaledSize = std::round(SIZE * scale);
