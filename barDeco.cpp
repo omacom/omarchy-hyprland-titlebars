@@ -133,7 +133,17 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
   m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
 
 }
+
+void COmarchyFloatingHyprBar::restoreDragSettings() {
+  if (m_bDragCenterOverridden) {
+    static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
+    if (DCENTER.good())
+      *DCENTER.ptr() = m_prevDragCenter;
+    m_bDragCenterOverridden = false;
+  }
+}
 COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() {
+  restoreDragSettings();
   std::erase(g_pOmarchyFloatingGlobalState->bars, m_self);
 }
 
@@ -616,12 +626,7 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
 
     LOG(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
   }
-  if (m_bDragCenterOverridden) {
-    static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
-    if (DCENTER.good())
-      *DCENTER.ptr() = m_prevDragCenter;
-    m_bDragCenterOverridden = false;
-  }
+  restoreDragSettings();
   m_bDragPending = false;
   m_bTouchEv = false;
   m_touchId = 0;

@@ -110,6 +110,7 @@ private:
   bool startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords);
   void handleMovement();
   void keepTitlebarReachable();
+  void restoreDragSettings();
   bool doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, bool BUTTONSRIGHT);
 
   CBox assignedBoxGlobal() const;
