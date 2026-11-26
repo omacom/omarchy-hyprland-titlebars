@@ -404,27 +404,39 @@ end
     gx = tiled['at'][0] + tiled['size'][0] // 2
     gy = tiled['at'][1] - 15
     # Drag right across the sibling tile so the drop lands over it; the
-    # native move-drag must float it and re-tile it on release.
+    # native move-drag must float it and re-tile it on release. One pointer
+    # process stays alive across the halfway assertion, and the first motion
+    # is sent within ~40ms of the press to prove quick flicks still pick up.
     dx, dy = 500, 20
-    dist = [f'move {gx} {gy}', 'wait 100', 'down', 'wait 200']
-    for i in range(1, 11):
-      dist += [f'move {round(gx + dx * i / 24)} {round(gy + dy * i / 24)}', 'wait 30']
-    pointer(dist)
+    held = subprocess.Popen([str(scratch / 'pointer'), '1280', '800'], stdin=subprocess.PIPE, text=True, env=env)
+    def feed(commands):
+      held.stdin.write('\n'.join(commands) + '\n')
+      held.stdin.flush()
+    # Press, move immediately (within ~40ms of the press, under the 75ms
+    # click gate), pause, then keep moving. The drag must still pick up:
+    # an early move must not cancel it.
+    feed([f'move {gx} {gy}', 'wait 100', 'down', 'wait 20'])
+    feed([f'move {round(gx + dx / 24)} {round(gy + dy / 24)}', 'wait 400'])
+    for i in range(2, 13):
+      feed([f'move {round(gx + dx * i / 24)} {round(gy + dy * i / 24)}', 'wait 40'])
+    time.sleep(1.0)
     mid = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
-    # The native pickup floats the window; the centering path puts the
-    # window's top roughly half its height above the cursor, far off-screen.
+    # The centering path puts the window's top roughly half its height above
+    # the cursor, far off-screen.
     assert mid['floating'], (tiled, mid)
     for i in range(13, 25):
-      dist += [f'move {round(gx + dx * i / 24)} {round(gy + dy * i / 24)}', 'wait 20']
-    dist += ['wait 100', 'up']
-    pointer(dist)
+      feed([f'move {round(gx + dx * i / 24)} {round(gy + dy * i / 24)}', 'wait 25'])
+    feed(['wait 100', 'up'])
+    held.stdin.close()
+    held.wait(timeout=10)
+    time.sleep(.15)
     after = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
     # The drop returns the window to tiled, restores the tile size, and the
     # native rearrange swaps it into the sibling's slot.
     assert not after['floating'], (tiled, after)
     assert abs(after['size'][0] - tiled['size'][0]) <= 6 and abs(after['size'][1] - tiled['size'][1]) <= 6, (tiled, after)
     assert after['at'][1] >= 30, (tiled, after)
-    print('PASS: dragging a tiled titlebar uses the native drag (float, center, native drop re-tile; clicks never pick up)', flush=True)
+    print('PASS: dragging a tiled titlebar (incl. quick flicks) uses the native drag (float, center, native drop re-tile; clicks never pick up)', flush=True)
     tile2.terminate()
     tile2.wait(timeout=5)
     ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = false, enabled = true, workspace_tag = "" } } })')

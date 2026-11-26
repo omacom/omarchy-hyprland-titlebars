@@ -477,7 +477,6 @@ void COmarchyFloatingHyprBar::onMouseMove(Vector2D coords) {
 
   if (!m_bDragPending || m_bTouchEv || !validMapped(m_pWindow) || m_touchId != 0)
     return;
-  m_bDragPending = false;
   handleMovement();
 }
 
@@ -630,7 +629,8 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
 
 void COmarchyFloatingHyprBar::handleMovement() {
   const auto window = m_pWindow.lock();
-
+  if (m_bDraggingThis)
+    return;
   if (!m_bTouchEv) {
     // A plain click never picks the window up: a drag only starts once the
     // press has been held long enough (clicks release far sooner).
@@ -674,6 +674,7 @@ void COmarchyFloatingHyprBar::handleMovement() {
       m_bDragCenterOverridden = true;
     }
   }
+  m_bDragPending = false;
   g_layoutManager->beginDragTarget(window->layoutTarget(), MBIND_MOVE);
   m_bDraggingThis = true;
   LOG(Log::DEBUG, "[hyprbars] Dragging initiated on {:x}", (uintptr_t)m_pWindow.lock().get());
