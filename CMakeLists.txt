@@ -32,4 +32,3 @@ pkg_check_modules(deps REQUIRED IMPORTED_TARGET
 target_link_libraries(titlebars PRIVATE rt PkgConfig::deps)
 
 install(TARGETS titlebars LIBRARY DESTINATION lib/omarchy-hyprland-titlebars)
-install(FILES integration/hyprbars.conf DESTINATION share/omarchy-hyprland-titlebars)

@@ -4,9 +4,8 @@
 --   * TITLEBARS points at ~/.local/lib/tiled-titlebars.so (user-built fork);
 --   * the plugin is loaded and enabled on every config load, not only when a
 --     workspace floats;
---   * layout_dwindle_enabled = true, layout_scrolling_enabled = true turn on
---     titlebars on those tiled layouts (the plugin default keeps the upstream
---     floating-only behavior);
+--   * tiled_enabled = true turns on titlebars on tiled windows (the plugin
+--     default keeps the floating-only behavior);
 --   * set_up_floating no longer configures titlebars (that already happened).
 -- Re-copy from /usr/share/omarchy/default/hypr/workspace-modes.lua and re-apply
 -- these edits when Omarchy updates this file.
@@ -488,8 +487,7 @@ local function titlebars()
     plugin = {
       hyprbars = {
         enabled = true,
-        layout_dwindle_enabled = true,
-        layout_scrolling_enabled = true,
+        tiled_enabled = true,
         bar_height = 30,
         bar_color = colors.titlebar,
         col = { text = colors.foreground },

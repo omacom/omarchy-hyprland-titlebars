@@ -26,7 +26,6 @@
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/layout/space/Space.hpp>
 #include <hyprland/src/layout/algorithm/Algorithm.hpp>
-#include <hyprland/src/layout/supplementary/WorkspaceAlgoMatcher.hpp>
 #include <hyprland/src/workspace/HLWorkspace.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
@@ -43,33 +42,6 @@
 using namespace Render::GL;
 
 static CHyprColor configColor(Config::INTEGER color) { return CHyprColor{static_cast<uint64_t>(color)}; }
-
-static std::string windowLayoutName(const PHLWINDOW& window) {
-  const auto workspace = window->m_workspace;
-  if (!workspace)
-    return "";
-  const auto space = workspace->space();
-  if (!space)
-    return "";
-  const auto algo = space->algorithm();
-  if (!algo)
-    return "";
-  const auto& tiled = algo->tiledAlgo();
-  if (!tiled)
-    return "";
-  return Layout::Supplementary::algoMatcher()->getNameForTiledAlgo(tiled.get());
-}
-static std::string activeLayoutName(const PHLWINDOW &win) {
-	// The workspace API does not expose a reliable "floating layout" name (a
-	// floating workspace still carries the default tiled algorithm), so the
-	// window's own float state is the only stable signal. A floating window
-	// always resolves to the "floating" layout options; anything else resolves
-	// to its tiled layout.
-	if (win->isFloating())
-		return "floating";
-	return windowLayoutName(win);
-}
-
 // Visibility limiter (plugin:hyprbars:show_mode): empty/unset means always;
 // only "active"/"hover" restrict when a bar is drawn.
 static eHyprBarMode parseShowMode(const std::string& s) {
@@ -152,26 +124,32 @@ eHyprBarMode COmarchyFloatingHyprBar::combinedMode() const {
   if (!PWINDOW)
     return eHyprBarMode::NEVER;
 
-  const auto layoutName = activeLayoutName(PWINDOW);
+  const bool floating = PWINDOW->isFloating();
 
-  // An explicitly configured per-layout option always overrides the global
-  // enabled switch: true shows bars on that layout even when the plugin is
-  // disabled globally, false hides them even when it is enabled.
-  if (!layoutName.empty()) {
-    CConfigValue<Config::BOOL> override("plugin:hyprbars:layout_" + layoutName + "_enabled");
-    if (override.good() && override.setByUser()) {
-      if (!*override)
-        return eHyprBarMode::NEVER;
-      return parseShowMode(g_pOmarchyFloatingGlobalState->config.showMode->value());
-    }
+  // Per-window-type enablement. A window is either floating or tiled, so its
+  // type selects exactly one of the two keys below.
+  //
+  // `enabled` is the legacy option: historically it was the only switch and
+  // meant "bars on floating windows". It is kept as the old spelling for
+  // `floating_enabled`. Floating visibility therefore resolves to the newer
+  // `floating_enabled` when it is set, otherwise to legacy `enabled`. Tiled
+  // windows are controlled solely by `tiled_enabled` (default off) and are
+  // independent of `enabled`.
+  if (floating) {
+    CConfigValue<Config::BOOL> floatingOpt("plugin:hyprbars:floating_enabled");
+    const bool show = floatingOpt.good() && floatingOpt.setByUser()
+        ? *floatingOpt
+        : g_pOmarchyFloatingGlobalState->config.enabled->value();
+    if (!show)
+      return eHyprBarMode::NEVER;
+    return parseShowMode(g_pOmarchyFloatingGlobalState->config.showMode->value());
   }
 
-  // Upstream master switch: off means no bars anywhere (unless a layout
-  // override above said otherwise).
-  if (!g_pOmarchyFloatingGlobalState->config.enabled->value())
-    return eHyprBarMode::NEVER;
+  CConfigValue<Config::BOOL> tiledOpt("plugin:hyprbars:tiled_enabled");
+  if (tiledOpt.good() && tiledOpt.setByUser() && *tiledOpt)
+    return parseShowMode(g_pOmarchyFloatingGlobalState->config.showMode->value());
 
-  return parseShowMode(g_pOmarchyFloatingGlobalState->config.showMode->value());
+  return eHyprBarMode::NEVER;
 }
 
 bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
@@ -780,18 +758,12 @@ static bool isMinimizeCmd(const std::string &cmd) {
 }
 
 static bool minimizeButtonVisibleFor(const PHLWINDOW &win) {
-  if (!win)
-    return true;
-	// A "floating workspace" is implemented by workspace-modes.lua as a per-
-	// window tag, not as a real Hyprland layout. Use that tag to decide the
-	// layout for the minimize button: only windows on a floating workspace use
-	// the floating option; all others use their tiled layout.
-	static constexpr auto FLOAT_TAG = "omarchy-floating-workspace";
-	const auto layoutName = win->m_ruleApplicator->m_tagKeeper.isTagged(FLOAT_TAG) ? std::string("floating") : windowLayoutName(win);
-	if (const auto it = g_pOmarchyFloatingGlobalState->config.layoutMinimizeButtonEnabled.find(layoutName);
-			it != g_pOmarchyFloatingGlobalState->config.layoutMinimizeButtonEnabled.end())
-		return it->second.value->value();
-  return false;
+  // Show the minimize button only when the active layout is floating. A
+  // "floating workspace" is implemented by workspace-modes.lua as a per-window
+  // tag, not as a real Hyprland layout, so the tag is the signal; a window
+  // floated on its own within a tiled layout gets no minimize button.
+  static constexpr auto FLOAT_TAG = "omarchy-floating-workspace";
+  return !win || win->m_ruleApplicator->m_tagKeeper.isTagged(FLOAT_TAG);
 }
 
 static std::vector<size_t> visibleButtonIndices(const PHLWINDOW &win) {

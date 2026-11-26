@@ -147,14 +147,6 @@ static void setLastInputTouch(bool touch) {
     if (b)
       b->refreshShownState();
 }
-namespace {
-// Layout names the plugin knows per-layout config for. Hyprland's plugin API
-// exposes no way to enumerate registered layouts (CWorkspaceAlgoMatcher only
-// offers register/lookup), so these stay a fixed list; extend it when a new
-// layout is added. Runtime resolution of a window's layout is independent and
-// already dynamic (see windowLayoutName/activeLayoutName in barDeco.cpp).
-constexpr std::array LAYOUT_NAMES = {"floating", "dwindle", "master", "monocle", "scrolling"};
-}
 static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   OMARCHY_FLOATING_PHANDLE = handle;
 
@@ -222,7 +214,7 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CIntValue>("plugin:hyprbars:button_border_size", "Width of the button border", 0);
   g_pOmarchyFloatingGlobalState->config.buttonBorderColor =
       makeShared<Config::Values::CColorValue>("plugin:hyprbars:button_border_color", "Color of the button border", 0x00000000);
-  g_pOmarchyFloatingGlobalState->config.enabled = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:enabled", "Whether bars are enabled", false);
+  g_pOmarchyFloatingGlobalState->config.enabled = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:enabled", "Bars on floating windows. Legacy option; prefer `floating_enabled`, which overrides this when set", false);
   g_pOmarchyFloatingGlobalState->config.showMode =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:show_mode",
           "When to show bars: \"active\" (focused windows only) or \"hover\" (pointer over the window or its bar); unset shows them always", "");
@@ -232,17 +224,17 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:on_double_click", "Action to execute on double click of the bar", "");
   g_pOmarchyFloatingGlobalState->config.workspaceTag =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:workspace_tag", "Restrict bars to windows with this tag", "");
-  for (const auto& L : LAYOUT_NAMES) {
-    auto& opt = g_pOmarchyFloatingGlobalState->config.layoutEnabled[L];
-    opt.path       = "plugin:hyprbars:layout_" + std::string(L) + "_enabled";
-    opt.desc       = "Whether titlebars are drawn on the " + std::string(L) + " layout";
-    opt.value      = makeShared<Config::Values::CBoolValue>(opt.path.c_str(), opt.desc.c_str(), false);
+  {
+    auto& opt = g_pOmarchyFloatingGlobalState->config.typeEnabled["floating"];
+    opt.path = "plugin:hyprbars:floating_enabled";
+    opt.desc = "Whether titlebars are drawn on floating windows. Overrides the legacy `enabled` option when set; unset falls back to it.";
+    opt.value = makeShared<Config::Values::CBoolValue>(opt.path.c_str(), opt.desc.c_str(), false);
   }
   {
-    auto& opt = g_pOmarchyFloatingGlobalState->config.layoutMinimizeButtonEnabled["floating"];
-    opt.path = "plugin:hyprbars:layout_floating_minimize_button_enabled";
-    opt.desc = "Show the minimize button on the floating layout";
-    opt.value = makeShared<Config::Values::CBoolValue>(opt.path.c_str(), opt.desc.c_str(), true);
+    auto& opt = g_pOmarchyFloatingGlobalState->config.typeEnabled["tiled"];
+    opt.path = "plugin:hyprbars:tiled_enabled";
+    opt.desc = "Whether titlebars are drawn on tiled windows. Independent of `enabled`; default off.";
+    opt.value = makeShared<Config::Values::CBoolValue>(opt.path.c_str(), opt.desc.c_str(), false);
   }
 
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barColor);
@@ -267,12 +259,10 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.enabled);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.showMode);
-  for (const auto& [name, opt] : g_pOmarchyFloatingGlobalState->config.layoutEnabled)
+  for (const auto& [name, opt] : g_pOmarchyFloatingGlobalState->config.typeEnabled)
     HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, opt.value);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.workspaceTag);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.iconOnHover);
-  for (const auto& [name, opt] : g_pOmarchyFloatingGlobalState->config.layoutMinimizeButtonEnabled)
-    HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, opt.value);
 
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.onDoubleClick);
 

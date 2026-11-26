@@ -293,7 +293,7 @@ end
     # A workspace-scoped bar must follow the tag immediately, without waiting
     # for a compositor config reload: a tagged window keeps its bar even when
     # tiled, and untagging releases the reserved space at once.
-    ctl('eval', 'hl.config({ plugin = { hyprbars = { workspace_tag = "floating-test" } } })')
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { tiled_enabled = true, workspace_tag = "floating-test" } } })')
     ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+floating-test", window = "address:{second_address}" }})')
     ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{second_address}" }})')
     time.sleep(.3)
@@ -314,7 +314,7 @@ end
     # Hover mode: a titlebar shows only while the pointer is over the window or
     # its own bar, releasing its reserved space the moment the pointer leaves.
     ctl('dispatch', f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "unset", window = "address:{second_address}" }})')
-    ctl('eval', 'hl.config({ plugin = { hyprbars = { enabled = true, layout_dwindle_enabled = true, show_mode = "hover", workspace_tag = "" } } })')
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { enabled = true, tiled_enabled = true, show_mode = "hover", workspace_tag = "" } } })')
     ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{second_address}" }})')
     time.sleep(.4)
     # Park the pointer off the window: whatever position the previous tests left
@@ -342,9 +342,9 @@ end
     capture('hover-left')
     print('PASS: hover mode shows the titlebar only while the pointer is over the window or its bar', flush=True)
 
-    # workspace_tag on top of hover: the restriction applies per-layout too —
-    # an untagged tiled window stays barless under the pointer, tagging it
-    # raises its bar while hovered, and removing the tag drops it again.
+    # workspace_tag on top of hover: the restriction applies per window type
+    # too — an untagged tiled window stays barless under the pointer, tagging
+    # it raises its bar while hovered, and removing the tag drops it again.
     ctl('eval', 'hl.config({ plugin = { hyprbars = { workspace_tag = "floating-test" } } })')
     time.sleep(.3)
     pointer(['move 640 400', 'wait 150'])
@@ -358,11 +358,11 @@ end
     ctl('dispatch', f'hl.dsp.window.tag({{ tag = "-floating-test", window = "address:{second_address}" }})')
     time.sleep(.4)
     assert client()['at'][1] < 30, client()
-    print('PASS: workspace_tag filters on top of hover per-layout mode', flush=True)
+    print('PASS: workspace_tag filters on top of hover per-window-type mode', flush=True)
 
     # show_mode_cursor_proximity restricts active/hover to positions near the window's
     # top; unset (0) keeps the current default behavior.
-    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = true, show_mode = "active", show_mode_cursor_proximity = 50, workspace_tag = "" } } })')
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { tiled_enabled = true, show_mode = "active", show_mode_cursor_proximity = 50, workspace_tag = "" } } })')
     ctl('dispatch', f'hl.dsp.focus({{ window = "address:{second_address}" }})')
     time.sleep(.3)
     pointer(['move 640 400', 'wait 150'])
@@ -376,7 +376,7 @@ end
     pointer([f'move 640 {hidden_top + 250}', 'wait 150'])
     time.sleep(.4)
     assert client()['at'][1] < 30, client()
-    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = true, show_mode = "active", show_mode_cursor_proximity = 0 } } })')
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { tiled_enabled = true, show_mode = "active", show_mode_cursor_proximity = 0 } } })')
     time.sleep(.3)
     pointer(['move 640 400', 'wait 150'])
     time.sleep(.4)
@@ -386,7 +386,7 @@ end
     # vertical grab point under the cursor, like the maximized-window restore.
     # Two tiled windows are needed so dwindle leaves real draggable tiles; a
     # single window tiles the whole workspace and has nowhere to move.
-    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = true, enabled = true, show_mode = "", workspace_tag = "" } } })')
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { tiled_enabled = true, enabled = true, show_mode = "", workspace_tag = "" } } })')
     tile2 = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-tile2', 'sleep', '90'], env=env, stdout=log, stderr=log)
     for _ in range(60):
       if len(json.loads(ctl('clients', '-j'))) == 2:
@@ -439,7 +439,7 @@ end
     print('PASS: dragging a tiled titlebar (incl. quick flicks) uses the native drag (float, center, native drop re-tile; clicks never pick up)', flush=True)
     tile2.terminate()
     tile2.wait(timeout=5)
-    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = false, enabled = true, workspace_tag = "" } } })')
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { tiled_enabled = false, enabled = true, workspace_tag = "" } } })')
     time.sleep(.3)
   finally:
     if secondary and secondary.poll() is None:

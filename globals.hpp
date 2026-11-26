@@ -56,16 +56,11 @@ struct SOmarchyFloatingGlobalState {
     SP<Config::Values::CBoolValue> barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, iconOnHover;
     SP<Config::Values::CBoolValue> enabled;
     SP<Config::Values::CStringValue> showMode;
-    struct SLayoutOption {
+    struct SOption {
       std::string path, desc;
       SP<Config::Values::CBoolValue> value;
     };
-    std::map<std::string, SLayoutOption> layoutEnabled;
-    struct SLayoutBoolOption {
-      std::string path, desc;
-      SP<Config::Values::CBoolValue> value;
-    };
-    std::map<std::string, SLayoutBoolOption> layoutMinimizeButtonEnabled;
+    std::map<std::string, SOption> typeEnabled;           // "floating" / "tiled"
     SP<Config::Values::CStringValue> barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, workspaceTag;
   } config;
 };
