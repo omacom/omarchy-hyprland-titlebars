@@ -134,11 +134,15 @@ private:
   bool m_bCancelledDown = false;
   int m_touchId = 0;
   // Vertical grab point inside the titlebar (0 = bar top) captured at press;
-  // restoring a maximized window keeps the grab under the cursor.
+  // used by the floating restore placement in handleMovement to keep the grab
+  // under the cursor. Tiled restores do not use it: they rely on Hyprland's
+  // native un-fullscreen + hotspot remap instead.
   double m_grabOffsetY = 0;
-  // A tiled drag temporarily disables binds:drag_center_window so the native
+  // A TILED drag temporarily disables binds:drag_center_window so the native
   // move-drag keeps the grabbed point under the cursor instead of centering;
-  // the option is restored on release.
+  // the option is restored on release. This is intentionally never touched for
+  // floating windows (they keep Hyprland's native centering/remap), and never
+  // combined with floating a tiled window.
   bool m_bDragCenterOverridden = false;
   bool m_prevDragCenter = true;
 

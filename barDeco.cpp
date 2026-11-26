@@ -647,31 +647,65 @@ void COmarchyFloatingHyprBar::handleMovement() {
   const auto bar = assignedBoxGlobal();
   const auto anchor = std::clamp((cursor.x - bar.x) / std::max(1.0, bar.w), 0.0, 1.0);
   const bool maximized = Fullscreen::controller()->isFullscreen(window, Fullscreen::FSMODE_MAXIMIZED);
+  // Maximized titlebar drags: the window was fullscreened, so the drag's
+  // first job is to restore it while keeping the grab point under the cursor.
+  // Two different strategies apply, and they must stay separate:
+  //
+  // - Floating windows keep their geometry when un-fullscreened, so we
+  //   restore and place them ourselves with the grab point preserved.
+  //   This is the established, working behavior: do not change it.
+  // - Tiled windows are re-placed by their tile layout immediately after an
+  //   un-fullscreen, so any manual placement is wiped out before the drag can
+  //   use it — and converting the window to floating would permanently break
+  //   its native lifecycle (float on drag, re-tile on drop). For tiled
+  //   windows we therefore touch nothing but centering, and let Hyprland's
+  //   own drag controller perform the un-fullscreen and hotspot remap.
   if (maximized) {
-    Fullscreen::controller()->setFullscreenMode(window, Fullscreen::FSMODE_NONE);
-    // Place the restored window so the grab point stays under the cursor.
-    // Native beginDragTarget captures the hotspot from the position at begin
-    // time, which can still be the pre-restore one, so place it explicitly.
-    auto box = window->layoutTarget()->position();
-    const auto reserved = window->getFullWindowReservedArea();
-    box.x = cursor.x - box.w * anchor;
-    box.y = cursor.y + reserved.topLeft.y - m_grabOffsetY;
-    g_layoutManager->setTargetGeom(box, window->layoutTarget());
-    window->layoutTarget()->warpPositionSize();
-    // If the restore lands tiled, native tiled drags would re-center over the
-    // placement; disable centering so the grab survives (floating restores
-    // keep it natively).
-    if (!window->isFloating() && !m_bDragCenterOverridden) {
-      static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
-      if (DCENTER.good() && *DCENTER) {
-        m_prevDragCenter = true;
-        *DCENTER.ptr() = false;
-        m_bDragCenterOverridden = true;
+    if (!window->isFloating()) {
+      // Tiled windows: NEVER float them here (floatWindow /
+      // changeFloatingMode), and NEVER place them manually.
+      //
+      // - A manual placement cannot survive: the tile layout re-places the
+      //   window immediately after the un-fullscreen, before the drag can
+      //   use it. Restoring the grab point for tiled windows is left to
+      //   Hyprland's own drag controller, which un-fullscreens the window
+      //   and remaps the hotspot onto the restored geometry.
+      // - Forcing the floating state breaks the native tiled drag lifecycle:
+      //   the drag is supposed to float the window transiently and re-tile it
+      //   on drop; pre-floating it makes the drop leave it floating for good.
+      // All that is needed here is to disable centering for the duration of
+      // this tiled drag, so the native remap keeps the grabbed point instead
+      // of re-centering the window.
+      if (!m_bDragCenterOverridden) {
+        static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
+        if (DCENTER.good() && *DCENTER) {
+          m_prevDragCenter = true;
+          *DCENTER.ptr() = false;
+          m_bDragCenterOverridden = true;
+        }
       }
+    } else {
+      // Floating windows keep their own geometry when un-fullscreened, so the
+      // placement below sticks and defines the hotspot that beginDragTarget
+      // captures. This is the established, verified behavior: do not disable
+      // drag_center_window here (floating restores keep Hyprland's native
+      // centering/remap), and do not route floating windows through the tiled
+      // path above.
+      Fullscreen::controller()->setFullscreenMode(window, Fullscreen::FSMODE_NONE);
+      // Place the restored window so the grab point stays under the cursor.
+      // Native beginDragTarget captures the hotspot from the position at begin
+      // time, which can still be the pre-restore one, so place it explicitly.
+      auto box = window->layoutTarget()->position();
+      const auto reserved = window->getFullWindowReservedArea();
+      box.x = cursor.x - box.w * anchor;
+      box.y = cursor.y + reserved.topLeft.y - m_grabOffsetY;
+      g_layoutManager->setTargetGeom(box, window->layoutTarget());
+      window->layoutTarget()->warpPositionSize();
     }
   } else if (!window->isFloating() && !m_bDragCenterOverridden) {
-    // Normal tiled drag: disable centering so the grab point stays under the
-    // cursor; the native drag still re-tiles on release.
+    // Normal (non-maximized) tiled drag: same rule as above — do not float,
+    // do not place; just disable centering so the native tiled drag keeps the
+    // grabbed point under the cursor and still re-tiles on release.
     static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
     if (DCENTER.good() && *DCENTER) {
       m_prevDragCenter = true;
