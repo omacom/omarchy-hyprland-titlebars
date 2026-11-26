@@ -706,12 +706,41 @@ void COmarchyFloatingHyprBar::handleMovement() {
     // Normal (non-maximized) tiled drag: same rule as above — do not float,
     // do not place; just disable centering so the native tiled drag keeps the
     // grabbed point under the cursor and still re-tiles on release.
+    //
+    // Limitation (documented; do not attempt to compensate again):
+    // Hyprland's drag controller maps the grab as a fraction of the window's
+    // CONTENT box and clamps that fraction to [0,1]. A press in the titlebar
+    // lies above that box, so the vertical fraction is always negative and
+    // clamps to 0: the cursor lands on the content's top edge no matter where
+    // in the bar the press happened. Offsetting the window before or during
+    // the drag cannot survive this clamp (verified empirically with 1x/2x
+    // bar-height and per-grab offsets), and floating tiled windows here would
+    // break the native float-on-drag / re-tile-on-drop lifecycle. A real fix
+    // requires changing the clamp or the reference box in Hyprland's
+    // DragController.
     static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
     if (DCENTER.good() && *DCENTER) {
       m_prevDragCenter = true;
       *DCENTER.ptr() = false;
       m_bDragCenterOverridden = true;
     }
+  }
+  if (!window->isFloating()) {
+    // Best-effort vertical grab compensation for tiled drags: the native drag
+    // maps against the content box (titlebar above it), so shift the window
+    // down by the titlebar height for the drag's reference. Write it to both
+    // the layout target and the live window position so native hotspot capture
+    // sees it. This is the validated compromise; see the limitation note above
+    // for what cannot be improved from here (per-grab bar-relative precision).
+    const auto BARH = g_pOmarchyFloatingGlobalState->config.barHeight->value();
+    const auto OFFSET = BARH;
+    auto box = window->layoutTarget()->position();
+    box.y += OFFSET;
+    g_layoutManager->setTargetGeom(box, window->layoutTarget());
+    window->layoutTarget()->warpPositionSize();
+    auto cur = window->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    cur.y += OFFSET;
+    window->layoutTarget()->setPositionGlobal(CBox{cur, window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT)});
   }
   m_bDragPending = false;
   g_layoutManager->beginDragTarget(window->layoutTarget(), MBIND_MOVE);
