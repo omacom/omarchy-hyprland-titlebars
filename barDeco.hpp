@@ -53,11 +53,11 @@ public:
   void onConfigReloaded();
 
   WP<COmarchyFloatingHyprBar> m_self;
-
   eHyprBarMode combinedMode() const;
   bool isEffectivelyShown() const;
   void updateFocus(PHLWINDOW activeWindow);
   void applyActiveResize(bool shown);
+  void refreshShownState();
 
 private:
   SBoxExtents m_seExtents;
@@ -74,14 +74,11 @@ private:
   bool m_hidden = false;
   bool m_bTitleColorChanged = false;
   bool m_bLastEnabledState = false;
-  mutable bool m_bHoverLatched = false;
-
   bool m_focused = false;
   bool m_bFloatResizedForBar = false;
   bool m_bWindowHasFocus = false;
   std::optional<CHyprColor> m_bForcedBarColor;
   std::optional<CHyprColor> m_bForcedTitleColor;
-
   Time::steady_tp m_lastMouseDown{};
 
   Vector2D cursorRelativeToBar();
@@ -135,6 +132,9 @@ private:
   bool m_bDragPending = false;
   bool m_bCancelledDown = false;
   int m_touchId = 0;
+  // Vertical grab point inside the titlebar (0 = bar top) captured at press;
+  // restoring a maximized window keeps the grab under the cursor.
+  double m_grabOffsetY = 0;
 
   // store hover state for buttons as a bitfield
   unsigned int m_iButtonHoverState = 0;

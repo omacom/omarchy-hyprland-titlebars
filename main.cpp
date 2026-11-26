@@ -140,6 +140,14 @@ int newOmarchyFloatingLuaButton(lua_State *L) {
   return 0;
 }
 
+static void setLastInputTouch(bool touch) {
+  if (g_pOmarchyFloatingGlobalState->lastInputTouch == touch)
+    return;
+  g_pOmarchyFloatingGlobalState->lastInputTouch = touch;
+  for (auto &b : g_pOmarchyFloatingGlobalState->bars)
+    if (b)
+      b->refreshShownState();
+}
 static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   OMARCHY_FLOATING_PHANDLE = handle;
 
@@ -162,15 +170,16 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   static auto P3 = Event::bus()->m_events.window.updateRules.listen([&](PHLWINDOW w) { onUpdateWindowRules(w); });
 
   // Touch has no hover: a hover-mode bar falls back to active while a touch
-  // gesture is the last input, until the pointer is used again.
+  // gesture is the last input, until the pointer is used again. Flipping the
+  // input kind changes what the bars draw, so refresh them on the flip.
   static auto PTouchDown = Event::bus()->m_events.input.touch.down.listen(
-      [&](ITouch::SDownEvent, Event::SCallbackInfo&) { g_pOmarchyFloatingGlobalState->lastInputTouch = true; });
+      [&](ITouch::SDownEvent, Event::SCallbackInfo&) { setLastInputTouch(true); });
   static auto PTouchMotion = Event::bus()->m_events.input.touch.motion.listen(
-      [&](ITouch::SMotionEvent, Event::SCallbackInfo&) { g_pOmarchyFloatingGlobalState->lastInputTouch = true; });
+      [&](ITouch::SMotionEvent, Event::SCallbackInfo&) { setLastInputTouch(true); });
   static auto PMouseMove = Event::bus()->m_events.input.mouse.move.listen(
-      [&](Vector2D, Event::SCallbackInfo&) { g_pOmarchyFloatingGlobalState->lastInputTouch = false; });
+      [&](Vector2D, Event::SCallbackInfo&) { setLastInputTouch(false); });
   static auto PMouseButton = Event::bus()->m_events.input.mouse.button.listen(
-      [&](IPointer::SButtonEvent, Event::SCallbackInfo&) { g_pOmarchyFloatingGlobalState->lastInputTouch = false; });
+      [&](IPointer::SButtonEvent, Event::SCallbackInfo&) { setLastInputTouch(false); });
 
   g_pOmarchyFloatingGlobalState->config.barColor = makeShared<Config::Values::CColorValue>("plugin:hyprbars:bar_color", "Change the bar color", 0x88333333);
   g_pOmarchyFloatingGlobalState->config.textColor = makeShared<Config::Values::CColorValue>("plugin:hyprbars:col.text", "Change the text color", 0xffffffff);

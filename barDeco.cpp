@@ -194,17 +194,14 @@ bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
 				// first (hovering in the empty space above must not show).
 				if (!isPointerOver())
 				{
-					m_bHoverLatched = false;
 					return false;
 				}
 				const bool inZone = isPointerOverBar() || proximityDistance() <= PROX;
 				if (inZone)
 				{
-					m_bHoverLatched = true;
 					return true;
 				}
 				// Hide immediately outside the zone.
-				m_bHoverLatched = false;
 				return false;
 			}
 		}
@@ -244,6 +241,12 @@ void COmarchyFloatingHyprBar::applyShownStateChange() {
     if (const auto monitor = PWINDOW->m_monitor.lock())
       monitor->m_scheduledRecalc = true;
   damageEntire();
+}
+
+void COmarchyFloatingHyprBar::refreshShownState() {
+  // Input-kind flips (touch -> mouse or back) change what a hover-mode bar
+  // draws; re-evaluate without waiting for a motion or focus event.
+  applyShownStateChange();
 }
 
 void COmarchyFloatingHyprBar::updateFocus(PHLWINDOW activeWindow) {
@@ -562,6 +565,10 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
   } else {
     m_lastMouseDown = Time::steadyNow();
     m_bDragPending = true;
+    m_grabOffsetY = COORDS.y;
+    // Remember where in the bar the drag started so restoring a maximized
+    // window keeps that point under the cursor (the horizontal anchor does the
+    // same across the bar's width).
   }
 }
 
@@ -617,8 +624,6 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
   }
 
   m_bDragPending = false;
-  // Keep the bar up after a drag.
-  m_bHoverLatched = true;
   m_bTouchEv = false;
   m_touchId = 0;
 }
@@ -633,11 +638,22 @@ void COmarchyFloatingHyprBar::handleMovement() {
 	if (maximized)
     Fullscreen::controller()->setFullscreenMode(window, Fullscreen::FSMODE_NONE);
 
-  if (maximized) {
+  const bool floating = window->isFloating();
+  // A tiled window has no position of its own; float it so the placement below
+  // can keep the grab point under the cursor, exactly like the maximized
+  // restore. Already-floating windows keep their own geometry and Hyprland's
+  // native drag preserves the grab point for them.
+  if (!floating && !maximized)
+    (void)Config::Actions::floatWindow(Config::Actions::eTogglableAction::TOGGLE_ACTION_ENABLE, window);
+
+  if (maximized || !floating) {
     auto box = window->layoutTarget()->position();
     const auto reserved = window->getFullWindowReservedArea();
     box.x = cursor.x - box.w * anchor;
-		box.y = cursor.y + reserved.topLeft.y;
+    // Keep the vertical grab point under the cursor: the reserved area above
+    // the window is the bar; subtracting where the grab started offsets the
+    // placement by that amount instead of snapping the bar's top to the cursor.
+		box.y = cursor.y + reserved.topLeft.y - m_grabOffsetY;
 		g_layoutManager->setTargetGeom(box, window->layoutTarget());
 		window->layoutTarget()->warpPositionSize();
   }

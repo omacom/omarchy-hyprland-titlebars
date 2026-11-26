@@ -378,6 +378,44 @@ end
     time.sleep(.4)
     assert client()['at'][1] >= 30, client()
     print('PASS: show_mode_cursor_proximity gates active mode on distance to top; unset restores default', flush=True)
+    # Dragging a tiled window by its titlebar must float it and keep the
+    # vertical grab point under the cursor, like the maximized-window restore.
+    # Two tiled windows are needed so dwindle leaves real draggable tiles; a
+    # single window tiles the whole workspace and has nowhere to move.
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = true, enabled = true, show_mode = "", workspace_tag = "" } } })')
+    tile2 = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-tile2', 'sleep', '90'], env=env, stdout=log, stderr=log)
+    for _ in range(60):
+      if len(json.loads(ctl('clients', '-j'))) == 2:
+        break
+      time.sleep(.1)
+    assert len(json.loads(ctl('clients', '-j'))) == 2
+    ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{second_address}" }})')
+    ctl('dispatch', 'hl.dsp.window.float({ action = "disable" })')
+    time.sleep(.4)
+    wins = {w['address']: w for w in json.loads(ctl('clients', '-j'))}
+    tiled = wins[second_address]
+    assert not tiled['floating'] and tiled['at'][1] >= 30, tiled
+    # expect the tiled window to be a half-width tile, not full-workspace
+    assert tiled['size'][0] < 1000, (tiled, wins)
+    gx = tiled['at'][0] + tiled['size'][0] // 2
+    gy = tiled['at'][1] - 15
+    dx, dy = 80, 40
+    dist = [f'move {gx} {gy}', 'wait 100', 'down', 'wait 120']
+    for i in range(1, 21):
+      dist += [f'move {round(gx + dx * i / 20)} {round(gy + dy * i / 20)}', 'wait 20']
+    dist += ['wait 100', 'up']
+    pointer(dist)
+    after = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
+    # The drag must float the tiled window and keep the vertical grab point
+    # under the cursor, so the content top moves by the pointer's dy. The
+    # horizontal placement is set by the same anchor as a maximized restore, but
+    # dwindle may reflow the floated tile, so only the vertical grab point is
+    # asserted exactly.
+    assert after['floating'], (tiled, after)
+    assert abs((after['at'][1] - tiled['at'][1]) - dy) <= 3, (tiled, after)
+    print('PASS: dragging a tiled titlebar floats it and keeps the vertical grab point under the cursor', flush=True)
+    tile2.terminate()
+    tile2.wait(timeout=5)
     ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = false, enabled = true, workspace_tag = "" } } })')
     time.sleep(.3)
   finally:
