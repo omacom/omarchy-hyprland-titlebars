@@ -135,6 +135,11 @@ private:
   // Vertical grab point inside the titlebar (0 = bar top) captured at press;
   // restoring a maximized window keeps the grab under the cursor.
   double m_grabOffsetY = 0;
+  // A tiled drag temporarily disables binds:drag_center_window so the native
+  // move-drag keeps the grabbed point under the cursor instead of centering;
+  // the option is restored on release.
+  bool m_bDragCenterOverridden = false;
+  bool m_prevDragCenter = true;
 
   // store hover state for buttons as a bitfield
   unsigned int m_iButtonHoverState = 0;

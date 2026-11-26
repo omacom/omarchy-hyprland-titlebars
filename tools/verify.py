@@ -78,7 +78,7 @@ end
     window = client()
     start_x = window['at'][0] + min(window['size'][0] // 2, 220)
     start_y = window['at'][1] - 15
-    commands = [f'move {start_x} {start_y}', 'wait 100', 'down', 'wait 120']
+    commands = [f'move {start_x} {start_y}', 'wait 100', 'down', 'wait 200']
     for i in range(1, 21):
       commands += [f'move {round(start_x + (x - start_x) * i / 20)} {round(start_y + (y - start_y) * i / 20)}', 'wait 20']
     commands += ['wait 100', 'up']
@@ -164,7 +164,7 @@ end
     before = client()
     x = before['at'][0] + before['size'][0] // 3
     y = before['at'][1] - 30 - 2 - 4
-    commands = [f'move {x} {y}', 'wait 100', 'down', 'wait 120']
+    commands = [f'move {x} {y}', 'wait 100', 'down', 'wait 200']
     for i in range(1, 11):
       commands += [f'move {x} {y - 6 * i}', 'wait 20']
     commands += ['wait 100', 'up']
@@ -206,6 +206,10 @@ end
     print('PASS: titlebar double-click maximize', flush=True)
     restored = drag_to(650, 220)
     assert restored['fullscreen'] == 0 and restored['size'] == original['size'], restored
+    # The grab point must stay under the cursor: a centered restore would put
+    # the window's top around half its height above the cursor, not below it
+    # where the grab offset places it.
+    assert restored['at'][1] > 150, (restored,)
     print('PASS: dragging a maximized titlebar restores its size under the pointer', flush=True)
 
     # Make dispatch deliberately slow, then focus another window after clicking.
@@ -389,8 +393,8 @@ end
         break
       time.sleep(.1)
     assert len(json.loads(ctl('clients', '-j'))) == 2
-    ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{second_address}" }})')
-    ctl('dispatch', 'hl.dsp.window.float({ action = "disable" })')
+    for a in [second_address] + [w['address'] for w in json.loads(ctl('clients', '-j')) if w['address'] != second_address]:
+      ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{a}" }})')
     time.sleep(.4)
     wins = {w['address']: w for w in json.loads(ctl('clients', '-j'))}
     tiled = wins[second_address]
@@ -399,21 +403,28 @@ end
     assert tiled['size'][0] < 1000, (tiled, wins)
     gx = tiled['at'][0] + tiled['size'][0] // 2
     gy = tiled['at'][1] - 15
-    dx, dy = 80, 40
-    dist = [f'move {gx} {gy}', 'wait 100', 'down', 'wait 120']
-    for i in range(1, 21):
-      dist += [f'move {round(gx + dx * i / 20)} {round(gy + dy * i / 20)}', 'wait 20']
+    # Drag right across the sibling tile so the drop lands over it; the
+    # native move-drag must float it and re-tile it on release.
+    dx, dy = 500, 20
+    dist = [f'move {gx} {gy}', 'wait 100', 'down', 'wait 200']
+    for i in range(1, 11):
+      dist += [f'move {round(gx + dx * i / 24)} {round(gy + dy * i / 24)}', 'wait 30']
+    pointer(dist)
+    mid = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
+    # The native pickup floats the window; the centering path puts the
+    # window's top roughly half its height above the cursor, far off-screen.
+    assert mid['floating'], (tiled, mid)
+    for i in range(13, 25):
+      dist += [f'move {round(gx + dx * i / 24)} {round(gy + dy * i / 24)}', 'wait 20']
     dist += ['wait 100', 'up']
     pointer(dist)
     after = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
-    # The drag must float the tiled window and keep the vertical grab point
-    # under the cursor, so the content top moves by the pointer's dy. The
-    # horizontal placement is set by the same anchor as a maximized restore, but
-    # dwindle may reflow the floated tile, so only the vertical grab point is
-    # asserted exactly.
-    assert after['floating'], (tiled, after)
-    assert abs((after['at'][1] - tiled['at'][1]) - dy) <= 3, (tiled, after)
-    print('PASS: dragging a tiled titlebar floats it and keeps the vertical grab point under the cursor', flush=True)
+    # The drop returns the window to tiled, restores the tile size, and the
+    # native rearrange swaps it into the sibling's slot.
+    assert not after['floating'], (tiled, after)
+    assert abs(after['size'][0] - tiled['size'][0]) <= 6 and abs(after['size'][1] - tiled['size'][1]) <= 6, (tiled, after)
+    assert after['at'][1] >= 30, (tiled, after)
+    print('PASS: dragging a tiled titlebar uses the native drag (float, center, native drop re-tile; clicks never pick up)', flush=True)
     tile2.terminate()
     tile2.wait(timeout=5)
     ctl('eval', 'hl.config({ plugin = { hyprbars = { layout_dwindle_enabled = false, enabled = true, workspace_tag = "" } } })')

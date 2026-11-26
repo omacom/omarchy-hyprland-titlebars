@@ -566,12 +566,8 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
     m_lastMouseDown = Time::steadyNow();
     m_bDragPending = true;
     m_grabOffsetY = COORDS.y;
-    // Remember where in the bar the drag started so restoring a maximized
-    // window keeps that point under the cursor (the horizontal anchor does the
-    // same across the bar's width).
-  }
 }
-
+}
 bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords) {
   static const auto RESIZEONBORDER = CConfigValue<Config::INTEGER>("general:resize_on_border");
   static const auto EXTENDGRAB = CConfigValue<Config::INTEGER>("general:extend_border_grab_area");
@@ -610,7 +606,6 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
     info.cancelled = true;
 
   m_bCancelledDown = false;
-
   if (m_bDraggingThis) {
     const bool MOVING = !m_bTouchEv && g_layoutManager->dragController()->mode() == MBIND_MOVE;
     g_layoutManager->endDragTarget();
@@ -622,7 +617,12 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
 
     LOG(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
   }
-
+  if (m_bDragCenterOverridden) {
+    static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
+    if (DCENTER.good())
+      *DCENTER.ptr() = m_prevDragCenter;
+    m_bDragCenterOverridden = false;
+  }
   m_bDragPending = false;
   m_bTouchEv = false;
   m_touchId = 0;
@@ -630,32 +630,49 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
 
 void COmarchyFloatingHyprBar::handleMovement() {
   const auto window = m_pWindow.lock();
+
+  if (!m_bTouchEv) {
+    // A plain click never picks the window up: a drag only starts once the
+    // press has been held long enough (clicks release far sooner).
+    const auto held = std::chrono::duration_cast<std::chrono::milliseconds>(Time::steadyNow() - m_lastMouseDown).count();
+    if (held < 75)
+      return;
+  }
   const auto cursor = g_pInputManager->getMouseCoordsInternal();
   const auto bar = assignedBoxGlobal();
   const auto anchor = std::clamp((cursor.x - bar.x) / std::max(1.0, bar.w), 0.0, 1.0);
-
-	const bool maximized = Fullscreen::controller()->isFullscreen(window, Fullscreen::FSMODE_MAXIMIZED);
-	if (maximized)
+  const bool maximized = Fullscreen::controller()->isFullscreen(window, Fullscreen::FSMODE_MAXIMIZED);
+  if (maximized) {
     Fullscreen::controller()->setFullscreenMode(window, Fullscreen::FSMODE_NONE);
-
-  const bool floating = window->isFloating();
-  // A tiled window has no position of its own; float it so the placement below
-  // can keep the grab point under the cursor, exactly like the maximized
-  // restore. Already-floating windows keep their own geometry and Hyprland's
-  // native drag preserves the grab point for them.
-  if (!floating && !maximized)
-    (void)Config::Actions::floatWindow(Config::Actions::eTogglableAction::TOGGLE_ACTION_ENABLE, window);
-
-  if (maximized || !floating) {
+    // Place the restored window so the grab point stays under the cursor.
+    // Native beginDragTarget captures the hotspot from the position at begin
+    // time, which can still be the pre-restore one, so place it explicitly.
     auto box = window->layoutTarget()->position();
     const auto reserved = window->getFullWindowReservedArea();
     box.x = cursor.x - box.w * anchor;
-    // Keep the vertical grab point under the cursor: the reserved area above
-    // the window is the bar; subtracting where the grab started offsets the
-    // placement by that amount instead of snapping the bar's top to the cursor.
-		box.y = cursor.y + reserved.topLeft.y - m_grabOffsetY;
-		g_layoutManager->setTargetGeom(box, window->layoutTarget());
-		window->layoutTarget()->warpPositionSize();
+    box.y = cursor.y + reserved.topLeft.y - m_grabOffsetY;
+    g_layoutManager->setTargetGeom(box, window->layoutTarget());
+    window->layoutTarget()->warpPositionSize();
+    // If the restore lands tiled, native tiled drags would re-center over the
+    // placement; disable centering so the grab survives (floating restores
+    // keep it natively).
+    if (!window->isFloating() && !m_bDragCenterOverridden) {
+      static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
+      if (DCENTER.good() && *DCENTER) {
+        m_prevDragCenter = true;
+        *DCENTER.ptr() = false;
+        m_bDragCenterOverridden = true;
+      }
+    }
+  } else if (!window->isFloating() && !m_bDragCenterOverridden) {
+    // Normal tiled drag: disable centering so the grab point stays under the
+    // cursor; the native drag still re-tiles on release.
+    static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
+    if (DCENTER.good() && *DCENTER) {
+      m_prevDragCenter = true;
+      *DCENTER.ptr() = false;
+      m_bDragCenterOverridden = true;
+    }
   }
   g_layoutManager->beginDragTarget(window->layoutTarget(), MBIND_MOVE);
   m_bDraggingThis = true;

@@ -15,7 +15,6 @@
 #include <hyprland/src/config/lua/bindings/LuaBindingsInternal.hpp>
 #include <hyprland/src/config/lua/types/LuaConfigColor.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
-
 #include <hyprutils/string/VarList.hpp>
 
 #include <algorithm>
@@ -168,7 +167,6 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
 
   static auto P = Event::bus()->m_events.window.open.listen([&](PHLWINDOW w) { onNewWindow(w); });
   static auto P3 = Event::bus()->m_events.window.updateRules.listen([&](PHLWINDOW w) { onUpdateWindowRules(w); });
-
   // Touch has no hover: a hover-mode bar falls back to active while a touch
   // gesture is the last input, until the pointer is used again. Flipping the
   // input kind changes what the bars draw, so refresh them on the flip.
