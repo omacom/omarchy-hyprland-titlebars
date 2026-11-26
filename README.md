@@ -25,7 +25,7 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | Option | Default | Behavior |
 | --- | --- | --- |
 | `enabled` | false | Upstream defaults to true. Off here, so a plugin left loaded after the config stops configuring it draws nothing. |
-| `layout_<name>_enabled` | empty (`true` for floating layout) | Per-layout override for the global `enabled` option. |
+| `layout_<name>_enabled` | empty (`true` for floating via the shipped `integration/hyprbars.conf`) | Per-layout override for the global `enabled` option. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
 | `workspace_tag` | empty | When set, titlebars apply only to windows carrying this tag, whatever their layout. Removing the tag releases the reserved titlebar space at once; tiling alone does not. |
 | `show_mode` | empty | When to draw bars. `"active"` shows them on the focused window only; `"hover"` shows them only while the pointer is over the window; empty shows them always. Touch has no hover so `"hover"` falls back to `"active"` while the last input is a touch gesture. |

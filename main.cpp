@@ -17,7 +17,7 @@
 #include <hyprland/src/state/MonitorState.hpp>
 #include <hyprutils/string/VarList.hpp>
 
-#include <algorithm>
+#include <array>
 
 #include "barDeco.hpp"
 #include "globals.hpp"
@@ -147,6 +147,14 @@ static void setLastInputTouch(bool touch) {
     if (b)
       b->refreshShownState();
 }
+namespace {
+// Layout names the plugin knows per-layout config for. Hyprland's plugin API
+// exposes no way to enumerate registered layouts (CWorkspaceAlgoMatcher only
+// offers register/lookup), so these stay a fixed list; extend it when a new
+// layout is added. Runtime resolution of a window's layout is independent and
+// already dynamic (see windowLayoutName/activeLayoutName in barDeco.cpp).
+constexpr std::array LAYOUT_NAMES = {"floating", "dwindle", "master", "monocle", "scrolling"};
+}
 static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   OMARCHY_FLOATING_PHANDLE = handle;
 
@@ -224,13 +232,7 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:on_double_click", "Action to execute on double click of the bar", "");
   g_pOmarchyFloatingGlobalState->config.workspaceTag =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:workspace_tag", "Restrict bars to windows with this tag", "");
-  {
-    auto& floating = g_pOmarchyFloatingGlobalState->config.layoutEnabled["floating"];
-    floating.path  = "plugin:hyprbars:layout_floating_enabled";
-    floating.desc  = "Whether titlebars are drawn on the floating layout";
-    floating.value = makeShared<Config::Values::CBoolValue>(floating.path.c_str(), floating.desc.c_str(), true);
-  }
-  for (const auto& L : {"dwindle", "master", "monocle", "scrolling"}) {
+  for (const auto& L : LAYOUT_NAMES) {
     auto& opt = g_pOmarchyFloatingGlobalState->config.layoutEnabled[L];
     opt.path       = "plugin:hyprbars:layout_" + std::string(L) + "_enabled";
     opt.desc       = "Whether titlebars are drawn on the " + std::string(L) + " layout";
