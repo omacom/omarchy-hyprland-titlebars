@@ -78,7 +78,7 @@ end
     window = client()
     start_x = window['at'][0] + min(window['size'][0] // 2, 220)
     start_y = window['at'][1] - 15
-    commands = [f'move {start_x} {start_y}', 'wait 100', 'down', 'wait 120']
+    commands = [f'move {start_x} {start_y}', 'wait 100', 'down', 'wait 200']
     for i in range(1, 21):
       commands += [f'move {round(start_x + (x - start_x) * i / 20)} {round(start_y + (y - start_y) * i / 20)}', 'wait 20']
     commands += ['wait 100', 'up']
@@ -88,6 +88,73 @@ end
   def capture(name):
     monitor = json.loads(ctl('monitors', '-j'))[0]['name']
     subprocess.run(['grim', '-o', monitor, str(args.artifacts / f'{name}.png')], env=env, check=True)
+  def png_rgb(path):
+    # Minimal PNG decode (bit depth 8, color types 0/2/6) using only stdlib.
+    import struct
+    import zlib
+    data = open(path, 'rb').read()
+    assert data[:8] == b'\x89PNG\r\n\x1a\n'
+    pos = 8
+    idat = b''
+    w = h = 0
+    bitdepth = colortype = 0
+    while pos < len(data):
+        ln = struct.unpack('>I', data[pos:pos + 4])[0]
+        typ = data[pos + 4:pos + 8]
+        chunk = data[pos + 8:pos + 8 + ln]
+        if typ == b'IHDR':
+            w, h, bitdepth, colortype = struct.unpack('>IIBB', chunk[:10])
+        elif typ == b'IDAT':
+            idat += chunk
+        elif typ == b'IEND':
+            break
+        pos += 12 + ln
+    assert bitdepth == 8 and colortype in (0, 2, 6)
+    channels = {0: 1, 2: 3, 6: 4}[colortype]
+    stride = w * channels
+    raw = zlib.decompress(idat)
+    out = bytearray(w * h * 3)
+    prev = bytearray(stride)
+    for y in range(h):
+        row = y * (stride + 1)
+        f = raw[row]
+        line = bytearray(raw[row + 1:row + 1 + stride])
+        if f == 1:
+            for i in range(channels, stride):
+                line[i] = (line[i] + line[i - channels]) & 255
+        elif f == 2:
+            for i in range(stride):
+                line[i] = (line[i] + prev[i]) & 255
+        elif f == 3:
+            for i in range(stride):
+                a = line[i - channels] if i >= channels else 0
+                line[i] = (line[i] + ((a + prev[i]) >> 1)) & 255
+        elif f == 4:
+            for i in range(stride):
+                a = line[i - channels] if i >= channels else 0
+                b = prev[i]
+                c = prev[i - channels] if i >= channels else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[i] = (line[i] + pr) & 255
+        for i in range(w):
+            base = i * channels
+            out[(y * w + i) * 3] = line[base]
+            out[(y * w + i) * 3 + 1] = line[base + 1]
+            out[(y * w + i) * 3 + 2] = line[base + 2]
+        prev = line
+    return w, h, out
+
+  def band_bright(name, x0, x1, y0, y1, thr=120):
+    w, h, px = png_rgb(str(args.artifacts / f'{name}.png'))
+    n = 0
+    for y in range(max(0, y0), min(h, y1)):
+        for x in range(max(0, x0), min(w, x1)):
+            i = (y * w + x) * 3
+            if px[i] > thr and px[i + 1] > thr and px[i + 2] > thr:
+                n += 1
+    return n
 
   try:
     for _ in range(80):
@@ -164,7 +231,7 @@ end
     before = client()
     x = before['at'][0] + before['size'][0] // 3
     y = before['at'][1] - 30 - 2 - 4
-    commands = [f'move {x} {y}', 'wait 100', 'down', 'wait 120']
+    commands = [f'move {x} {y}', 'wait 100', 'down', 'wait 200']
     for i in range(1, 11):
       commands += [f'move {x} {y - 6 * i}', 'wait 20']
     commands += ['wait 100', 'up']
@@ -189,14 +256,27 @@ end
     assert top['at'][1] >= 32, top
     print('PASS: real pointer titlebar drags move the window to any edge without snapping and keep its titlebar on screen', flush=True)
 
+    # Normalize placement first: the edge drags above can leave the window
+    # partially off-screen (e.g. past the left edge), which would put the
+    # titlebar outside the pointer's reach.
+    ctl('dispatch', f'hl.dsp.window.move({{ x = 340, y = 220, window = "address:{client()["address"]}" }})')
+    time.sleep(.3)
     window = client()
     x, y = window['at'][0] + 120, window['at'][1] - 15
-    pointer([f'move {x} {y}', 'wait 450', 'down', 'up', 'wait 100', 'down', 'up'])
+    for _ in range(3):
+        pointer([f'move {x} {y}', 'wait 450', 'down', 'up', 'wait 100', 'down', 'up'])
+        if client()['fullscreen'] == 1:
+            break
+        time.sleep(.3)
     assert client()['fullscreen'] == 1, client()
     capture('maximized')
     print('PASS: titlebar double-click maximize', flush=True)
     restored = drag_to(650, 220)
     assert restored['fullscreen'] == 0 and restored['size'] == original['size'], restored
+    # The grab point must stay under the cursor: a centered restore would put
+    # the window's top around half its height above the cursor, not below it
+    # where the grab offset places it.
+    assert restored['at'][1] > 150, (restored,)
     print('PASS: dragging a maximized titlebar restores its size under the pointer', flush=True)
 
     # Make dispatch deliberately slow, then focus another window after clicking.
@@ -277,24 +357,206 @@ end
         break
       time.sleep(.1)
 
-    # A workspace-scoped bar must release its reserved space as soon as a
-    # window joins tiling, without waiting for a compositor config reload.
-    ctl('eval', 'hl.config({ plugin = { hyprbars = { workspace_tag = "floating-test" } } })')
+    # A workspace-scoped bar must follow the tag immediately, without waiting
+    # for a compositor config reload: a tagged window keeps its bar even when
+    # tiled, and untagging releases the reserved space at once.
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { tiled_enabled = true, workspace_tag = "floating-test" } } })')
     ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+floating-test", window = "address:{second_address}" }})')
     ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{second_address}" }})')
     time.sleep(.3)
     tiled = client()
-    assert not tiled['floating'] and tiled['at'][1] < 30, tiled
-    capture('workspace-tiled-no-titlebar')
+    assert not tiled['floating'] and tiled['at'][1] >= 30, tiled
+    capture('workspace-tiled-tagged')
     ctl('dispatch', f'hl.dsp.window.float({{ action = "enable", window = "address:{second_address}" }})')
     ctl('dispatch', f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "set", window = "address:{second_address}" }})')
     time.sleep(.3)
     assert client()['at'][1] >= 30, client()
+    before_untag = client()['at'][1]
     ctl('dispatch', f'hl.dsp.window.tag({{ tag = "-floating-test", window = "address:{second_address}" }})')
     time.sleep(.3)
-    assert client()['at'][1] < 30, client()
+    assert before_untag - client()['at'][1] >= 20, client()
     capture('workspace-untagged-no-titlebar')
-    print('PASS: workspace-scoped titlebars release space immediately when tiled or untagged', flush=True)
+    print('PASS: workspace_tag follows the tag immediately, tiled included, without a reload', flush=True)
+
+    # Hover mode: a titlebar shows only while the pointer is over the window or
+    # its own bar, releasing its reserved space the moment the pointer leaves.
+    ctl('dispatch', f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "unset", window = "address:{second_address}" }})')
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { enabled = true, tiled_enabled = true, show_mode = "hover", workspace_tag = "" } } })')
+    ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{second_address}" }})')
+    time.sleep(.4)
+    # Park the pointer off the window: whatever position the previous tests left
+    # it at may sit inside it.
+    pointer(['move 1276 796', 'wait 150'])
+    time.sleep(.4)
+    hover_hidden = client()
+    assert not hover_hidden['floating'] and hover_hidden['at'][1] < 30, hover_hidden
+    capture('hover-hidden')
+    pointer(['move 640 400', 'wait 150'])
+    time.sleep(.4)
+    hover_shown = client()
+    assert hover_shown['at'][1] >= 30, (hover_hidden, hover_shown)
+    capture('hover-over-window')
+    # Hovering the drawn bar itself keeps it up (proximity is the gate only
+    # for approaching from outside).
+    bar_y = hover_shown['at'][1] - 15
+    pointer([f'move 640 {bar_y}', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] >= 30, client()
+    capture('hover-over-bar')
+    pointer(['move 1276 796', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] < 30, client()
+    capture('hover-left')
+    print('PASS: hover mode shows the titlebar only while the pointer is over the window or its bar', flush=True)
+
+    # workspace_tag on top of hover: the restriction applies per window type
+    # too — an untagged tiled window stays barless under the pointer, tagging
+    # it raises its bar while hovered, and removing the tag drops it again.
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { workspace_tag = "floating-test" } } })')
+    time.sleep(.3)
+    pointer(['move 640 400', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] < 30, client()
+    capture('hover-untagged-hidden')
+    ctl('dispatch', f'hl.dsp.window.tag({{ tag = "+floating-test", window = "address:{second_address}" }})')
+    time.sleep(.4)
+    assert client()['at'][1] >= 30, client()
+    capture('hover-tagged-shown')
+    ctl('dispatch', f'hl.dsp.window.tag({{ tag = "-floating-test", window = "address:{second_address}" }})')
+    time.sleep(.4)
+    assert client()['at'][1] < 30, client()
+    print('PASS: workspace_tag filters on top of hover per-window-type mode', flush=True)
+
+    # show_mode_cursor_proximity restricts active/hover to positions near the window's
+    # top; unset (0) keeps the current default behavior.
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { tiled_enabled = true, show_mode = "active", show_mode_cursor_proximity = 50, workspace_tag = "" } } })')
+    ctl('dispatch', f'hl.dsp.focus({{ window = "address:{second_address}" }})')
+    time.sleep(.3)
+    pointer(['move 640 400', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] < 30, client()
+    hidden_top = client()['at'][1]
+    pointer([f'move 640 {hidden_top + 12}', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] >= 30, client()
+    capture('proximity-shown')
+    pointer([f'move 640 {hidden_top + 250}', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] < 30, client()
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { tiled_enabled = true, show_mode = "active", show_mode_cursor_proximity = 0 } } })')
+    time.sleep(.3)
+    pointer(['move 640 400', 'wait 150'])
+    time.sleep(.4)
+    assert client()['at'][1] >= 30, client()
+    print('PASS: show_mode_cursor_proximity gates active mode on distance to top; unset restores default', flush=True)
+    # Dragging a tiled window by its titlebar must float it and keep the
+    # vertical grab point under the cursor, like the maximized-window restore.
+    # Two tiled windows are needed so dwindle leaves real draggable tiles; a
+    # single window tiles the whole workspace and has nowhere to move.
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { tiled_enabled = true, enabled = true, show_mode = "", workspace_tag = "" } } })')
+    tile2 = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-tile2', 'sleep', '90'], env=env, stdout=log, stderr=log)
+    for _ in range(60):
+      if len(json.loads(ctl('clients', '-j'))) == 2:
+        break
+      time.sleep(.1)
+    assert len(json.loads(ctl('clients', '-j'))) == 2
+    for a in [second_address] + [w['address'] for w in json.loads(ctl('clients', '-j')) if w['address'] != second_address]:
+      ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{a}" }})')
+    time.sleep(.4)
+    wins = {w['address']: w for w in json.loads(ctl('clients', '-j'))}
+    tiled = wins[second_address]
+    assert not tiled['floating'] and tiled['at'][1] >= 30, tiled
+    # expect the tiled window to be a half-width tile, not full-workspace
+    assert tiled['size'][0] < 1000, (tiled, wins)
+    gx = tiled['at'][0] + tiled['size'][0] // 2
+    gy = tiled['at'][1] - 15
+    # Drag right across the sibling tile so the drop lands over it; the
+    # native move-drag must float it and re-tile it on release. One pointer
+    # process stays alive across the halfway assertion, and the first motion
+    # is sent within ~40ms of the press to prove quick flicks still pick up.
+    dx, dy = 500, 20
+    held = subprocess.Popen([str(scratch / 'pointer'), '1280', '800'], stdin=subprocess.PIPE, text=True, env=env)
+    def feed(commands):
+      held.stdin.write('\n'.join(commands) + '\n')
+      held.stdin.flush()
+    # Press, move immediately (within ~40ms of the press, under the 75ms
+    # click gate), pause, then keep moving. The drag must still pick up:
+    # an early move must not cancel it.
+    feed([f'move {gx} {gy}', 'wait 100', 'down', 'wait 20'])
+    feed([f'move {round(gx + dx / 24)} {round(gy + dy / 24)}', 'wait 400'])
+    for i in range(2, 13):
+      feed([f'move {round(gx + dx * i / 24)} {round(gy + dy * i / 24)}', 'wait 40'])
+    time.sleep(1.0)
+    mid = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
+    # The centering path puts the window's top roughly half its height above
+    # the cursor, far off-screen.
+    assert mid['floating'], (tiled, mid)
+    for i in range(13, 25):
+      feed([f'move {round(gx + dx * i / 24)} {round(gy + dy * i / 24)}', 'wait 25'])
+    feed(['wait 100', 'up'])
+    held.stdin.close()
+    held.wait(timeout=10)
+    time.sleep(.15)
+    after = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
+    # The drop returns the window to tiled, restores the tile size, and the
+    # native rearrange swaps it into the sibling's slot.
+    assert not after['floating'], (tiled, after)
+    assert abs(after['size'][0] - tiled['size'][0]) <= 6 and abs(after['size'][1] - tiled['size'][1]) <= 6, (tiled, after)
+    assert after['at'][1] >= 30, (tiled, after)
+    print('PASS: dragging a tiled titlebar (incl. quick flicks) uses the native drag (float, center, native drop re-tile; clicks never pick up)', flush=True)
+    tile2.terminate()
+    tile2.wait(timeout=5)
+    # Regression: with floating bars disabled, a tiled titlebar drag must keep
+    # its bar — Hyprland temporarily floats the window during the drag, and
+    # the visibility decision must use the window's starting type, not the
+    # transient float.
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { floating_enabled = false, tiled_enabled = true, show_mode = "", workspace_tag = "" } } })')
+    time.sleep(.3)
+    drag2 = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-drag2', 'sleep', '90'], env=env, stdout=log, stderr=log)
+    for _ in range(60):
+        if len(json.loads(ctl('clients', '-j'))) >= 2:
+            break
+        time.sleep(.1)
+    assert len(json.loads(ctl('clients', '-j'))) >= 2
+    for a in [second_address] + [w['address'] for w in json.loads(ctl('clients', '-j')) if w['address'] != second_address]:
+        ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{a}" }})')
+    time.sleep(.4)
+    wins = {w['address']: w for w in json.loads(ctl('clients', '-j'))}
+    tiled = wins[second_address]
+    assert not tiled['floating'] and tiled['at'][1] >= 30, tiled
+    gx = tiled['at'][0] + tiled['size'][0] // 2
+    gy = tiled['at'][1] - 15
+    held = subprocess.Popen([str(scratch / 'pointer'), '1280', '800'], stdin=subprocess.PIPE, text=True, env=env)
+    def feed(cmds):
+        held.stdin.write('\n'.join(cmds) + '\n')
+        held.stdin.flush()
+    feed([f'move {gx} {gy}', 'wait 100', 'down', 'wait 300'])
+    feed([f'move {gx + 40} {gy + 20}', 'wait 500'])
+    time.sleep(1.0)
+    mid = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
+    assert mid['floating'], (tiled, mid)  # the transient float really happens
+    assert mid['at'][1] >= 30, mid  # ...but the bar stays reserved
+    capture('tiled-drag-floating-disabled-mid')
+    bar_inside = band_bright('tiled-drag-floating-disabled-mid',
+                             mid['at'][0], mid['at'][0] + mid['size'][0],
+                             mid['at'][1] - 30, mid['at'][1])
+    bar_outside = band_bright('tiled-drag-floating-disabled-mid',
+                              mid['at'][0] + mid['size'][0] + 60,
+                              min(1280, mid['at'][0] + mid['size'][0] + 600),
+                              mid['at'][1] - 30, mid['at'][1])
+    assert bar_inside > 400 and bar_outside < 20, (mid, bar_inside, bar_outside)  # bar actually drawn mid-drag
+    feed(['wait 100', 'up'])
+    held.stdin.close()
+    held.wait(timeout=10)
+    time.sleep(.2)
+    after = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
+    assert not after['floating'] and after['at'][1] >= 30, (tiled, after)
+    capture('tiled-drag-floating-disabled')
+    print('PASS: tiled titlebar drag keeps its bar while floating bars are disabled', flush=True)
+    drag2.terminate()
+    drag2.wait(timeout=5)
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { tiled_enabled = false, enabled = true, workspace_tag = "" } } })')
+    time.sleep(.3)
   finally:
     if secondary and secondary.poll() is None:
       secondary.terminate()

@@ -8,10 +8,10 @@
 #include <hyprland/src/render/gl/GLTexture.hpp>
 #include <hyprland/src/devices/IPointer.hpp>
 #include <hyprland/src/devices/ITouch.hpp>
-#include <hyprland/src/desktop/rule/windowRule/WindowRule.hpp>
 #include <hyprland/src/helpers/AnimatedVariable.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/helpers/signal/Signal.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include "globals.hpp"
 
 #define private public
@@ -53,6 +53,11 @@ public:
   void onConfigReloaded();
 
   WP<COmarchyFloatingHyprBar> m_self;
+  eHyprBarMode combinedMode() const;
+  bool isEffectivelyShown() const;
+  void updateFocus(PHLWINDOW activeWindow);
+  void applyActiveResize(bool shown);
+  void refreshShownState();
 
 private:
   SBoxExtents m_seExtents;
@@ -69,16 +74,24 @@ private:
   bool m_hidden = false;
   bool m_bTitleColorChanged = false;
   bool m_bLastEnabledState = false;
+  bool m_focused = false;
+  bool m_bFloatResizedForBar = false;
   bool m_bWindowHasFocus = false;
   std::optional<CHyprColor> m_bForcedBarColor;
   std::optional<CHyprColor> m_bForcedTitleColor;
-
   Time::steady_tp m_lastMouseDown{};
 
-  PHLANIMVAR<CHyprColor> m_cRealBarColor;
-
   Vector2D cursorRelativeToBar();
+  CBox barBand() const;
+  CBox hoverRegion() const;
+  bool isPointerOver() const;
+  bool isPointerOverBar() const;
+  bool withinProximity() const;
+  void applyShownStateChange();
+  void updateHover();
+  double proximityDistance() const;
 
+  PHLANIMVAR<CHyprColor> m_cRealBarColor;
   void renderPass(Render::CRenderContext &ctx, PHLMONITOR, float const &a);
   void renderBarTitle(const Vector2D &bufferSize, const float scale);
   void renderBarButtons(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
@@ -97,9 +110,10 @@ private:
   bool startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords);
   void handleMovement();
   void keepTitlebarReachable();
+  void restoreDragSettings();
   bool doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, bool BUTTONSRIGHT);
 
-  CBox assignedBoxGlobal();
+  CBox assignedBoxGlobal() const;
 
   CHyprSignalListener m_pMouseButtonCallback;
   CHyprSignalListener m_pTouchDownCallback;
@@ -107,22 +121,40 @@ private:
 
   CHyprSignalListener m_pTouchMoveCallback;
   CHyprSignalListener m_pMouseMoveCallback;
+  CHyprSignalListener m_pFocusCallback;
 
   std::string m_szLastTitle;
+  // Filtered button width used when the title texture was built; a change
+  // (e.g. a tag flip hiding/showing the minimize button) invalidates it.
+  float m_fCachedTitleButtonsWidth = -1.f;
 
   bool m_bDraggingThis = false;
   bool m_bTouchEv = false;
   bool m_bDragPending = false;
   bool m_bCancelledDown = false;
+  // Floating state captured at press time, before Hyprland's native drag
+  // temporarily floats a tiled window; the visibility decision uses it for
+  // the whole drag so the transient float can't hide the bar.
+  std::optional<bool> m_dragStartFloating;
   int m_touchId = 0;
+  // Vertical grab point inside the titlebar (0 = bar top) captured at press;
+  // used by the floating restore placement in handleMovement to keep the grab
+  // under the cursor. Tiled restores do not use it: they rely on Hyprland's
+  // native un-fullscreen + hotspot remap instead.
+  double m_grabOffsetY = 0;
+  // A TILED drag temporarily disables binds:drag_center_window so the native
+  // move-drag keeps the grabbed point under the cursor instead of centering;
+  // the option is restored on release. This is intentionally never touched for
+  // floating windows (they keep Hyprland's native centering/remap), and never
+  // combined with floating a tiled window.
+  bool m_bDragCenterOverridden = false;
+  bool m_prevDragCenter = true;
 
   // store hover state for buttons as a bitfield
   unsigned int m_iButtonHoverState = 0;
 
   // for dynamic updates
   int m_iLastHeight = 0;
-
-  size_t getVisibleButtonCount(Config::INTEGER barButtonPadding, Config::INTEGER barPadding, const Vector2D &bufferSize, const float scale);
 
   friend class COmarchyFloatingBarPassElement;
 };

@@ -18,9 +18,15 @@
 #include <hyprland/src/config/supplementary/executor/Executor.hpp>
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
 #include <hyprland/src/animation/AnimationManager.hpp>
+#include <fstream>
+#include <ctime>
 #include <hyprland/src/protocols/LayerShell.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
+#include <hyprland/src/config/ConfigValue.hpp>
+#include <hyprland/src/layout/space/Space.hpp>
+#include <hyprland/src/layout/algorithm/Algorithm.hpp>
+#include <hyprland/src/workspace/HLWorkspace.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
 
@@ -30,12 +36,38 @@
 #include "appName.hpp"
 
 #include <algorithm>
-#include <climits>
+  #include <climits>
+  #include <vector>
 
 using namespace Render::GL;
 
 static CHyprColor configColor(Config::INTEGER color) { return CHyprColor{static_cast<uint64_t>(color)}; }
+// Visibility limiter (plugin:hyprbars:show_mode): empty/unset means always;
+// only "active"/"hover" restrict when a bar is drawn.
+static eHyprBarMode parseShowMode(const std::string& s) {
+  if (s == "active")
+    return eHyprBarMode::ACTIVE;
+  if (s == "hover")
+    return eHyprBarMode::HOVER;
+  return eHyprBarMode::ALWAYS;
+}
 
+// True when show_mode_cursor_proximity is explicitly configured. While it is
+// left unset, "active" mode simply follows focus and needs no pointer
+// tracking; once set (including an explicit 0) both modes gate on the pointer
+// being over the window.
+static bool proximityConfigured() {
+    return CConfigValue<Config::INTEGER>("plugin:hyprbars:show_mode_cursor_proximity").setByUser();
+}
+
+// The pointer position only needs tracking when a visibility mode can hide a
+// bar, or button icons appear on hover; otherwise mouse motion does no scan.
+static bool pointerTrackingNeeded() {
+    const auto& mode = g_pOmarchyFloatingGlobalState->config.showMode->value();
+    if (mode == "hover")
+        return true;
+    return mode == "active" && proximityConfigured();
+}
 static std::string windowCommand(std::string command, const PHLWINDOW &window) {
   // Resolve the decoration owner synchronously. An asynchronously spawned
   // command must not choose its target from whatever happens to be focused.
@@ -64,25 +96,281 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
   // move events
   m_pTouchMoveCallback = Event::bus()->m_events.input.touch.motion.listen([&](ITouch::SMotionEvent e, Event::SCallbackInfo &info) { onTouchMove(info, e); });
   m_pMouseMoveCallback = Event::bus()->m_events.input.mouse.move.listen([&](Vector2D c, Event::SCallbackInfo &info) { onMouseMove(c); });
+  m_pFocusCallback = Event::bus()->m_events.window.active.listen([&](PHLWINDOW w, Desktop::eFocusReason) { updateFocus(w); });
+
+  m_focused = Desktop::focusState()->window() == pWindow;
 
   Animation::mgr()->createAnimation(configColor(g_pOmarchyFloatingGlobalState->config.barColor->value()), m_cRealBarColor,
                                     Config::animationTree()->getAnimationPropertyConfig("border"), pWindow, AVARDAMAGE_NONE);
   m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
+
 }
 
-COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() { std::erase(g_pOmarchyFloatingGlobalState->bars, m_self); }
+void COmarchyFloatingHyprBar::restoreDragSettings() {
+  if (m_bDragCenterOverridden) {
+    static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
+    if (DCENTER.good())
+      *DCENTER.ptr() = m_prevDragCenter;
+    m_bDragCenterOverridden = false;
+  }
+}
+COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() {
+  restoreDragSettings();
+  std::erase(g_pOmarchyFloatingGlobalState->bars, m_self);
+}
+
+eHyprBarMode COmarchyFloatingHyprBar::combinedMode() const {
+  const auto PWINDOW = m_pWindow.lock();
+  if (!PWINDOW)
+    return eHyprBarMode::NEVER;
+
+  // A native tiled titlebar drag temporarily floats the window. The bar must
+  // keep following the window's type at press time until the drag ends, so a
+  // floating-disabled + tiled-enabled config doesn't hide the bar mid-drag.
+  const bool dragging = m_bDragPending || m_bDraggingThis;
+  const bool floating = dragging && m_dragStartFloating.has_value() ? *m_dragStartFloating : PWINDOW->isFloating();
+
+  // Per-window-type enablement. A window is either floating or tiled, so its
+  // type selects exactly one of the two keys below.
+  // `enabled` is the legacy option: historically it was the only switch and
+  // meant "bars on floating windows". It is kept as the old spelling for
+  // `floating_enabled`. Floating visibility therefore resolves to the newer
+  // `floating_enabled` when it is set, otherwise to legacy `enabled`. Tiled
+  // windows are controlled solely by `tiled_enabled` (default off) and are
+  // independent of `enabled`.
+  if (floating) {
+    CConfigValue<Config::BOOL> floatingOpt("plugin:hyprbars:floating_enabled");
+    const bool show = floatingOpt.good() && floatingOpt.setByUser()
+        ? *floatingOpt
+        : g_pOmarchyFloatingGlobalState->config.enabled->value();
+    if (!show)
+      return eHyprBarMode::NEVER;
+    return parseShowMode(g_pOmarchyFloatingGlobalState->config.showMode->value());
+  }
+
+  CConfigValue<Config::BOOL> tiledOpt("plugin:hyprbars:tiled_enabled");
+  if (tiledOpt.good() && tiledOpt.setByUser() && *tiledOpt)
+    return parseShowMode(g_pOmarchyFloatingGlobalState->config.showMode->value());
+
+  return eHyprBarMode::NEVER;
+}
+
+bool COmarchyFloatingHyprBar::isEffectivelyShown() const {
+  if (m_hidden)
+    return false;
+  switch (combinedMode()) {
+    case eHyprBarMode::NEVER: return false;
+    case eHyprBarMode::ACTIVE:
+      // Without an explicit proximity limit, active shows on the focused
+      // window only, with no pointer tracking.
+      if (!proximityConfigured())
+        return m_focused;
+      return m_focused && isPointerOver() && (isPointerOverBar() || withinProximity());
+    case eHyprBarMode::ALWAYS: return true;
+    case eHyprBarMode::HOVER:
+      // Touch has no hover: while a touch gesture was the last input, fall
+      // back to active mode.
+      if (g_pOmarchyFloatingGlobalState->lastInputTouch)
+        return proximityConfigured() ? (m_focused && withinProximity()) : m_focused;
+			{
+				// Dragging keeps the bar up wherever the window goes; pointer-anchored
+				// hiding would fire while the window moves under the cursor.
+				if (m_bDraggingThis || m_bDragPending)
+					return true;
+				const double PROX = g_pOmarchyFloatingGlobalState->config.showModeCursorProximity->value();
+				if (PROX <= 0)
+					return isPointerOver();
+				// Show/hide transition on one quantity: d = distance from the cursor
+				// to the window's top. The pointer must be over the window or bar
+				// first (hovering in the empty space above must not show).
+				if (!isPointerOver())
+				{
+					return false;
+				}
+				const bool inZone = isPointerOverBar() || proximityDistance() <= PROX;
+				if (inZone)
+				{
+					return true;
+				}
+				// Hide immediately outside the zone.
+				return false;
+			}
+		}
+	return false;
+}
+
+double COmarchyFloatingHyprBar::proximityDistance() const
+{
+	const auto WIN = m_pWindow.lock();
+	if (!validMapped(WIN))
+		return std::numeric_limits<double>::max();
+	const auto PWORKSPACE = WIN->m_workspace;
+	const auto WORKSPACEOFFSET = PWORKSPACE && !(WIN->m_state & Desktop::View::WINDOW_STATE_PINNED) ? PWORKSPACE->m_renderOffset->value() : Vector2D();
+	const auto reserved = WIN->getFullWindowReservedArea();
+	// Floating windows do not move for their own bar; tiled windows subtract
+	// their top reservation so the reference is stable across show/hide.
+	const double reservedTop = WIN->isFloating() ? 0.0 : reserved.topLeft.y;
+	return std::abs(g_pInputManager->getMouseCoordsInternal().y - (WIN->position(Desktop::View::IGeometric::GEOMETRIC_GOAL).y + WIN->presentation().floatingOffset().y + WORKSPACEOFFSET.y - reservedTop));
+}
+
+bool COmarchyFloatingHyprBar::withinProximity() const
+{
+	const auto PROX = g_pOmarchyFloatingGlobalState->config.showModeCursorProximity->value();
+	// Unset (0) keeps the current behavior: no distance restriction.
+	if (PROX <= 0)
+		return true;
+	return proximityDistance() <= static_cast<double>(PROX);
+}
+
+void COmarchyFloatingHyprBar::applyShownStateChange() {
+  const auto ENABLED = isEffectivelyShown();
+  if (ENABLED == m_bLastEnabledState)
+    return;
+	m_bLastEnabledState = ENABLED;
+	g_pDecorationPositioner->repositionDeco(this);
+  if (const auto PWINDOW = m_pWindow.lock(); PWINDOW)
+    if (const auto monitor = PWINDOW->m_monitor.lock())
+      monitor->m_scheduledRecalc = true;
+  damageEntire();
+}
+
+void COmarchyFloatingHyprBar::refreshShownState() {
+  // Input-kind flips (touch -> mouse or back) change what a hover-mode bar
+  // draws; re-evaluate without waiting for a motion or focus event.
+  applyShownStateChange();
+}
+
+void COmarchyFloatingHyprBar::updateFocus(PHLWINDOW activeWindow) {
+  const auto focused = m_pWindow.lock() == activeWindow;
+  if (focused == m_focused)
+    return;
+  m_focused = focused;
+  applyShownStateChange();
+}
+
+void COmarchyFloatingHyprBar::updateHover() {
+  // A drag keeps the bar up under the pointer, wherever the window goes.
+  if (m_bDraggingThis || m_bDragPending)
+    return;
+  // Modes that gate on the pointer (active/hover) re-evaluate on motion;
+  // always-visible bars never need to.
+  if (combinedMode() == eHyprBarMode::ALWAYS)
+    return;
+  applyShownStateChange();
+}
+
+CBox COmarchyFloatingHyprBar::barBand() const {
+  const auto WIN = m_pWindow.lock();
+  CBox band;
+  if (!validMapped(WIN))
+    return band;
+
+  const auto PWORKSPACE = WIN->m_workspace;
+  const auto WORKSPACEOFFSET = PWORKSPACE && !(WIN->m_state & Desktop::View::WINDOW_STATE_PINNED) ? PWORKSPACE->m_renderOffset->value() : Vector2D();
+
+  const auto HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
+  const auto BORDER = WIN->presentation().borderSize();
+
+  // The band above the window's content box where the positioner puts the bar.
+  band = CBox(WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x + WIN->presentation().floatingOffset().x,
+              WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y + WIN->presentation().floatingOffset().y - HEIGHT - BORDER,
+              WIN->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x, HEIGHT + BORDER);
+  band.translate(WORKSPACEOFFSET);
+
+  // On floating windows the real placement can differ (floating offset, border
+  // precedence, rounding); include the live assigned box when there is one.
+  const auto BARASSIGNED = assignedBoxGlobal();
+  if (BARASSIGNED.w > 0 && BARASSIGNED.h > 0) {
+    const double right = std::max(band.x + band.w, BARASSIGNED.x + BARASSIGNED.w);
+    const double bottom = std::max(band.y + band.h, BARASSIGNED.y + BARASSIGNED.h);
+    band.x = std::min(band.x, BARASSIGNED.x);
+    band.y = std::min(band.y, BARASSIGNED.y);
+    band.w = right - band.x;
+    band.h = bottom - band.y;
+  }
+  return band;
+}
+
+CBox COmarchyFloatingHyprBar::hoverRegion() const {
+  const auto WIN = m_pWindow.lock();
+  CBox region;
+  if (!validMapped(WIN))
+    return region;
+
+  const auto PWORKSPACE = WIN->m_workspace;
+  const auto WORKSPACEOFFSET = PWORKSPACE && !(WIN->m_state & Desktop::View::WINDOW_STATE_PINNED) ? PWORKSPACE->m_renderOffset->value() : Vector2D();
+
+  region = CBox(WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x + WIN->presentation().floatingOffset().x,
+                WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y + WIN->presentation().floatingOffset().y,
+                WIN->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x, WIN->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y);
+  region.translate(WORKSPACEOFFSET);
+
+  const auto BAND = barBand();
+  const double right = std::max(region.x + region.w, BAND.x + BAND.w);
+  const double bottom = std::max(region.y + region.h, BAND.y + BAND.h);
+  region.x = std::min(region.x, BAND.x);
+  region.y = std::min(region.y, BAND.y);
+  region.w = right - region.x;
+  region.h = bottom - region.y;
+  return region;
+}
+
+bool COmarchyFloatingHyprBar::isPointerOver() const {
+  const auto MOUSE = g_pInputManager->getMouseCoordsInternal();
+  if (!hoverRegion().containsPoint(MOUSE))
+    return false;
+
+	// Only the window's actual rectangle (and its drawn bar) count; the
+	// reserved band above the window must not, or the bar pre-shows before the
+	// pointer reaches the window (which also feeds flicker).
+	const auto WIN = m_pWindow.lock();
+	CBox winBox;
+	if (WIN)
+	{
+		winBox = {WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x + WIN->presentation().floatingOffset().x,
+							WIN->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y + WIN->presentation().floatingOffset().y,
+							WIN->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x, WIN->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y};
+		// Match hoverRegion(): slide with the workspace during workspace
+		// transitions. Pinned windows stay fixed.
+		const auto PWORKSPACE = WIN->m_workspace;
+		const auto WORKSPACEOFFSET = PWORKSPACE && !(WIN->m_state & Desktop::View::WINDOW_STATE_PINNED) ? PWORKSPACE->m_renderOffset->value() : Vector2D();
+		winBox.translate(WORKSPACEOFFSET);
+	}
+	const bool insideWindow = winBox.containsPoint(MOUSE);
+	const bool onDrawnBar = assignedBoxGlobal().containsPoint(MOUSE);
+
+	// Overlapping floating windows: only the topmost window under the pointer
+	// counts; a covered window must not hover-show its bar.
+	Desktop::CViewHitTester hitTester{*Desktop::viewState()};
+  const auto TOP = hitTester.windowAt(MOUSE, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
+  if (TOP == m_pWindow)
+		return insideWindow || onDrawnBar;
+	if (TOP)
+		return false;
+	return insideWindow || onDrawnBar;
+}
+
+bool COmarchyFloatingHyprBar::isPointerOverBar() const
+{
+	const auto MOUSE = g_pInputManager->getMouseCoordsInternal();
+	// Only the live drawn bar counts (the assigned box, which is what is
+	// rendered). No geometric overreach: proximity remains the strict gate for
+	// approaching from outside, while hovering the bar itself keeps it shown.
+	const auto BAR = assignedBoxGlobal();
+	return BAR.w > 0 && BAR.h > 0 && BAR.containsPoint(MOUSE);
+}
 
 SDecorationPositioningInfo COmarchyFloatingHyprBar::getPositioningInfo() {
   const auto HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
-  const auto ENABLED = g_pOmarchyFloatingGlobalState->config.enabled->value();
+  const auto SHOWN = isEffectivelyShown();
   const auto PRECEDENCE = g_pOmarchyFloatingGlobalState->config.barPrecedenceOverBorder->value();
 
   SDecorationPositioningInfo info;
-  info.policy = m_hidden ? DECORATION_POSITION_ABSOLUTE : DECORATION_POSITION_STICKY;
+  info.policy = SHOWN ? DECORATION_POSITION_STICKY : DECORATION_POSITION_ABSOLUTE;
   info.edges = DECORATION_EDGE_TOP;
   info.priority = PRECEDENCE ? 10005 : 5000;
   info.reserved = true;
-  info.desiredExtents = {{0, m_hidden || !ENABLED ? 0 : HEIGHT}, {0, 0}};
+  info.desiredExtents = {{0, SHOWN ? HEIGHT : 0}, {0, 0}};
   return info;
 }
 
@@ -96,7 +384,7 @@ void COmarchyFloatingHyprBar::onPositioningReply(const SDecorationPositioningRep
 std::string COmarchyFloatingHyprBar::getDisplayName() { return "Hyprbar"; }
 
 bool COmarchyFloatingHyprBar::inputIsValid() {
-  if (m_hidden || !g_pOmarchyFloatingGlobalState->config.enabled->value())
+  if (!isEffectivelyShown())
     return false;
 
   if (g_pSeatManager->m_seatGrab && !g_pSeatManager->m_seatGrab->accepts(m_pWindow->wlSurface()->resource()))
@@ -172,14 +460,14 @@ void COmarchyFloatingHyprBar::onTouchUp(Event::SCallbackInfo &info, ITouch::SUpE
 }
 
 void COmarchyFloatingHyprBar::onMouseMove(Vector2D coords) {
-  // Hovered buttons are highlighted, so redraw when the pointer moves between
-  // them, also with hardware cursors.
+  // Button-face highlights always follow the pointer; only the visibility
+  // re-evaluation is gated to cursor-dependent modes.
   damageOnButtonHover();
+  if (pointerTrackingNeeded())
+    updateHover();
 
   if (!m_bDragPending || m_bTouchEv || !validMapped(m_pWindow) || m_touchId != 0)
     return;
-
-  m_bDragPending = false;
   handleMovement();
 }
 
@@ -244,6 +532,7 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
 
     m_bDraggingThis = false;
     m_bDragPending = false;
+    m_dragStartFloating.reset();
     m_bTouchEv = false;
     return;
   }
@@ -264,12 +553,14 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
       std::chrono::duration_cast<std::chrono::milliseconds>(Time::steadyNow() - m_lastMouseDown).count() < 400 /* Arbitrary delay I found suitable */) {
     Config::Supplementary::executor()->spawn(windowCommand(ON_DOUBLE_CLICK, PWINDOW));
     m_bDragPending = false;
+    m_dragStartFloating.reset();
   } else {
     m_lastMouseDown = Time::steadyNow();
     m_bDragPending = true;
-  }
+    m_grabOffsetY = COORDS.y;
+    m_dragStartFloating = PWINDOW->isFloating();
 }
-
+}
 bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords) {
   static const auto RESIZEONBORDER = CConfigValue<Config::INTEGER>("general:resize_on_border");
   static const auto EXTENDGRAB = CConfigValue<Config::INTEGER>("general:extend_border_grab_area");
@@ -296,6 +587,7 @@ bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHL
   m_bCancelledDown = true;
   m_bDraggingThis = true;
   m_bDragPending = false;
+  m_dragStartFloating.reset();
   return true;
 }
 
@@ -308,7 +600,6 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
     info.cancelled = true;
 
   m_bCancelledDown = false;
-
   if (m_bDraggingThis) {
     const bool MOVING = !m_bTouchEv && g_layoutManager->dragController()->mode() == MBIND_MOVE;
     g_layoutManager->endDragTarget();
@@ -320,30 +611,124 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
 
     LOG(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
   }
-
+  restoreDragSettings();
   m_bDragPending = false;
+  m_dragStartFloating.reset();
   m_bTouchEv = false;
   m_touchId = 0;
 }
 
 void COmarchyFloatingHyprBar::handleMovement() {
   const auto window = m_pWindow.lock();
+  if (m_bDraggingThis)
+    return;
+  if (!m_bTouchEv) {
+    // A plain click never picks the window up: a drag only starts once the
+    // press has been held long enough (clicks release far sooner).
+    const auto held = std::chrono::duration_cast<std::chrono::milliseconds>(Time::steadyNow() - m_lastMouseDown).count();
+    if (held < 75)
+      return;
+  }
   const auto cursor = g_pInputManager->getMouseCoordsInternal();
   const auto bar = assignedBoxGlobal();
   const auto anchor = std::clamp((cursor.x - bar.x) / std::max(1.0, bar.w), 0.0, 1.0);
-  const auto offset = std::clamp(cursor.y - bar.y, 0.0, bar.h);
   const bool maximized = Fullscreen::controller()->isFullscreen(window, Fullscreen::FSMODE_MAXIMIZED);
-  if (maximized)
-    Fullscreen::controller()->setFullscreenMode(window, Fullscreen::FSMODE_NONE);
-
+  // Maximized titlebar drags: the window was fullscreened, so the drag's
+  // first job is to restore it while keeping the grab point under the cursor.
+  // Two different strategies apply, and they must stay separate:
+  //
+  // - Floating windows keep their geometry when un-fullscreened, so we
+  //   restore and place them ourselves with the grab point preserved.
+  //   This is the established, working behavior: do not change it.
+  // - Tiled windows are re-placed by their tile layout immediately after an
+  //   un-fullscreen, so any manual placement is wiped out before the drag can
+  //   use it — and converting the window to floating would permanently break
+  //   its native lifecycle (float on drag, re-tile on drop). For tiled
+  //   windows we therefore touch nothing but centering, and let Hyprland's
+  //   own drag controller perform the un-fullscreen and hotspot remap.
   if (maximized) {
+    if (!window->isFloating()) {
+      // Tiled windows: NEVER float them here (floatWindow /
+      // changeFloatingMode), and NEVER place them manually.
+      //
+      // - A manual placement cannot survive: the tile layout re-places the
+      //   window immediately after the un-fullscreen, before the drag can
+      //   use it. Restoring the grab point for tiled windows is left to
+      //   Hyprland's own drag controller, which un-fullscreens the window
+      //   and remaps the hotspot onto the restored geometry.
+      // - Forcing the floating state breaks the native tiled drag lifecycle:
+      //   the drag is supposed to float the window transiently and re-tile it
+      //   on drop; pre-floating it makes the drop leave it floating for good.
+      // All that is needed here is to disable centering for the duration of
+      // this tiled drag, so the native remap keeps the grabbed point instead
+      // of re-centering the window.
+      if (!m_bDragCenterOverridden) {
+        static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
+        if (DCENTER.good() && *DCENTER) {
+          m_prevDragCenter = true;
+          *DCENTER.ptr() = false;
+          m_bDragCenterOverridden = true;
+        }
+      }
+    } else {
+      // Floating windows keep their own geometry when un-fullscreened, so the
+      // placement below sticks and defines the hotspot that beginDragTarget
+      // captures. This is the established, verified behavior: do not disable
+      // drag_center_window here (floating restores keep Hyprland's native
+      // centering/remap), and do not route floating windows through the tiled
+      // path above.
+      Fullscreen::controller()->setFullscreenMode(window, Fullscreen::FSMODE_NONE);
+      // Place the restored window so the grab point stays under the cursor.
+      // Native beginDragTarget captures the hotspot from the position at begin
+      // time, which can still be the pre-restore one, so place it explicitly.
+      auto box = window->layoutTarget()->position();
+      const auto reserved = window->getFullWindowReservedArea();
+      box.x = cursor.x - box.w * anchor;
+      box.y = cursor.y + reserved.topLeft.y - m_grabOffsetY;
+      g_layoutManager->setTargetGeom(box, window->layoutTarget());
+      window->layoutTarget()->warpPositionSize();
+    }
+  } else if (!window->isFloating() && !m_bDragCenterOverridden) {
+    // Normal (non-maximized) tiled drag: same rule as above — do not float,
+    // do not place; just disable centering so the native tiled drag keeps the
+    // grabbed point under the cursor and still re-tiles on release.
+    //
+    // Limitation (documented; do not attempt to compensate again):
+    // Hyprland's drag controller maps the grab as a fraction of the window's
+    // CONTENT box and clamps that fraction to [0,1]. A press in the titlebar
+    // lies above that box, so the vertical fraction is always negative and
+    // clamps to 0: the cursor lands on the content's top edge no matter where
+    // in the bar the press happened. Offsetting the window before or during
+    // the drag cannot survive this clamp (verified empirically with 1x/2x
+    // bar-height and per-grab offsets), and floating tiled windows here would
+    // break the native float-on-drag / re-tile-on-drop lifecycle. A real fix
+    // requires changing the clamp or the reference box in Hyprland's
+    // DragController.
+    static const auto DCENTER = CConfigValue<Config::BOOL>("binds:drag_center_window");
+    if (DCENTER.good() && *DCENTER) {
+      m_prevDragCenter = true;
+      *DCENTER.ptr() = false;
+      m_bDragCenterOverridden = true;
+    }
+  }
+  if (!window->isFloating()) {
+    // Best-effort vertical grab compensation for tiled drags: the native drag
+    // maps against the content box (titlebar above it), so shift the window
+    // down by the titlebar height for the drag's reference. Write it to both
+    // the layout target and the live window position so native hotspot capture
+    // sees it. This is the validated compromise; see the limitation note above
+    // for what cannot be improved from here (per-grab bar-relative precision).
+    const auto BARH = g_pOmarchyFloatingGlobalState->config.barHeight->value();
+    const auto OFFSET = BARH;
     auto box = window->layoutTarget()->position();
-    const auto reserved = window->getFullWindowReservedArea();
-    box.x = cursor.x - box.w * anchor;
-    box.y = cursor.y + reserved.topLeft.y - offset;
+    box.y += OFFSET;
     g_layoutManager->setTargetGeom(box, window->layoutTarget());
     window->layoutTarget()->warpPositionSize();
+    auto cur = window->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    cur.y += OFFSET;
+    window->layoutTarget()->setPositionGlobal(CBox{cur, window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT)});
   }
+  m_bDragPending = false;
   g_layoutManager->beginDragTarget(window->layoutTarget(), MBIND_MOVE);
   m_bDraggingThis = true;
   LOG(Log::DEBUG, "[hyprbars] Dragging initiated on {:x}", (uintptr_t)m_pWindow.lock().get());
@@ -376,18 +761,64 @@ void COmarchyFloatingHyprBar::keepTitlebarReachable() {
   LOG(Log::DEBUG, "[hyprbars] Moved {:x} to keep its titlebar reachable", (uintptr_t)window.get());
 }
 
+static bool isMinimizeCmd(const std::string &cmd) {
+  return cmd.find("window-minimize") != std::string::npos || cmd.find("minimize") != std::string::npos;
+}
+
+static bool minimizeButtonVisibleFor(const PHLWINDOW &win) {
+  // Show the minimize button only when the active layout is floating. A
+  // "floating workspace" is implemented by workspace-modes.lua as a per-window
+  // tag, not as a real Hyprland layout, so the tag is the signal; a window
+  // floated on its own within a tiled layout gets no minimize button.
+  static constexpr auto FLOAT_TAG = "omarchy-floating-workspace";
+  return !win || win->m_ruleApplicator->m_tagKeeper.isTagged(FLOAT_TAG);
+}
+
+static std::vector<size_t> visibleButtonIndices(const PHLWINDOW &win) {
+  std::vector<size_t> indices;
+  const bool showMinimize = minimizeButtonVisibleFor(win);
+  const auto &buttons = g_pOmarchyFloatingGlobalState->buttons;
+  for (size_t i = 0; i < buttons.size(); ++i)
+    if (!(isMinimizeCmd(buttons[i].cmd) && !showMinimize))
+      indices.push_back(i);
+  return indices;
+}
+
+static std::vector<size_t> fitVisibleButtonIndices(const PHLWINDOW &win, float availableWidth) {
+  const auto candidates = visibleButtonIndices(win);
+  std::vector<size_t> out;
+  float remaining = availableWidth;
+  for (const size_t i : candidates) {
+    const float space = g_pOmarchyFloatingGlobalState->buttons[i].size + g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
+    if (remaining < space)
+      break;
+    out.push_back(i);
+    remaining -= space;
+  }
+  return out;
+}
+static float visibleButtonsWidth(const PHLWINDOW &win) {
+  float width = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
+  for (const size_t i : visibleButtonIndices(win))
+    width += g_pOmarchyFloatingGlobalState->buttons[i].size + g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
+  return width;
+}
+
 bool COmarchyFloatingHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS,
                                             const bool BUTTONSRIGHT) {
+  const auto win = m_pWindow.lock();
+  const auto indices = fitVisibleButtonIndices(win, assignedBoxGlobal().w - 2.f * barPadding);
   // check if on a button
   float offset = barPadding;
 
-  for (auto &b : g_pOmarchyFloatingGlobalState->buttons) {
+  for (const size_t i : indices) {
+    const auto &b = g_pOmarchyFloatingGlobalState->buttons[i];
     const auto BARBUF = Vector2D{(int)assignedBoxGlobal().w, barHeight};
     Vector2D currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - barButtonPadding - b.size - offset : offset), (BARBUF.y - b.size) / 2.0}.floor();
 
     if (VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + b.size + barButtonPadding, currentPos.y + b.size)) {
       // hit on close
-      Config::Supplementary::executor()->spawn(windowCommand(b.cmd, m_pWindow.lock()));
+      Config::Supplementary::executor()->spawn(windowCommand(b.cmd, win));
       return true;
     }
 
@@ -405,10 +836,7 @@ void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const f
   const auto BARPADDING = g_pOmarchyFloatingGlobalState->config.barPadding->value();
   const auto BARBUTTONPADDING = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
 
-  float buttonSizes = BARBUTTONPADDING;
-  for (auto &b : g_pOmarchyFloatingGlobalState->buttons) {
-    buttonSizes += b.size + BARBUTTONPADDING;
-  }
+  float buttonSizes = visibleButtonsWidth(m_pWindow.lock());
 
   const int scaledSize = std::round(SIZE * scale);
   const auto scaledButtonsSize = buttonSizes * scale;
@@ -425,23 +853,6 @@ void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const f
   m_pTextTex = g_pHyprRenderer->renderText(m_szLastTitle, COLOR, scaledSize, false, FONT, maxWidth, WEIGHT.m_value);
 }
 
-size_t COmarchyFloatingHyprBar::getVisibleButtonCount(Config::INTEGER barButtonPadding, Config::INTEGER barPadding, const Vector2D &bufferSize,
-                                                      const float scale) {
-  float availableSpace = bufferSize.x - barPadding * scale * 2;
-  size_t count = 0;
-
-  for (const auto &button : g_pOmarchyFloatingGlobalState->buttons) {
-    const float buttonSpace = (button.size + barButtonPadding) * scale;
-    if (availableSpace >= buttonSpace) {
-      count++;
-      availableSpace -= buttonSpace;
-    } else
-      break;
-  }
-
-  return count;
-}
-
 void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a) {
   const auto BARBUTTONPADDING = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
   const auto BARPADDING = g_pOmarchyFloatingGlobalState->config.barPadding->value();
@@ -452,11 +863,15 @@ void COmarchyFloatingHyprBar::renderBarButtons(Render::CRenderContext &ctx, CBox
   const auto BUTTONBORDERCOLOR = g_pOmarchyFloatingGlobalState->config.buttonBorderColor->value();
 
   const bool BUTTONSRIGHT = ALIGNBUTTONS != "left";
-  const auto visibleCount = getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale);
   const bool INVALIDATEICONS = m_bButtonsDirty || m_bWindowSizeChanged;
 
+  // Filter hidden buttons before measuring width so drawing and hit-testing
+  // agree on which buttons exist.
+  const auto win = m_pWindow.lock();
+  const auto visibleIndices = fitVisibleButtonIndices(win, barBox->w / scale - 2.f * BARPADDING);
+
   int offset = BARPADDING * scale;
-  for (size_t i = 0; i < visibleCount; ++i) {
+  for (const size_t i : visibleIndices) {
     auto &button = g_pOmarchyFloatingGlobalState->buttons[i];
     const auto scaledButtonSize = button.size * scale;
     const auto scaledButtonsPad = BARBUTTONPADDING * scale;
@@ -507,13 +922,17 @@ void COmarchyFloatingHyprBar::renderBarButtonsText(Render::CRenderContext &ctx, 
   const auto ICONONHOVER = g_pOmarchyFloatingGlobalState->config.iconOnHover->value();
 
   const bool BUTTONSRIGHT = ALIGNBUTTONS != "left";
-  const auto visibleCount = getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale);
   const auto COORDS = cursorRelativeToBar();
+
+  // Same filtered list as renderBarButtons and the press handler: filter
+  // hidden buttons first, then fit by width.
+  const auto win = m_pWindow.lock();
+  const auto visibleIndices = fitVisibleButtonIndices(win, barBox->w / scale - 2.f * BARPADDING);
 
   int offset = BARPADDING * scale;
   float noScaleOffset = BARPADDING;
 
-  for (size_t i = 0; i < visibleCount; ++i) {
+  for (const size_t i : visibleIndices) {
     auto &button = g_pOmarchyFloatingGlobalState->buttons[i];
     const auto scaledButtonSize = button.size * scale;
     const auto scaledButtonsPad = BARBUTTONPADDING * scale;
@@ -556,14 +975,14 @@ void COmarchyFloatingHyprBar::renderBarButtonsText(Render::CRenderContext &ctx, 
 }
 
 void COmarchyFloatingHyprBar::draw(Render::CRenderContext &ctx, PHLMONITOR pMonitor, const float &a, const Render::SWindowRenderPresentation &presentation) {
-  const auto ENABLED = g_pOmarchyFloatingGlobalState->config.enabled->value();
+  const auto ENABLED = isEffectivelyShown();
 
   if (m_bLastEnabledState != ENABLED) {
     m_bLastEnabledState = ENABLED;
     g_pDecorationPositioner->repositionDeco(this);
   }
 
-  if (m_hidden || !validMapped(m_pWindow) || !ENABLED)
+  if (!validMapped(m_pWindow) || !ENABLED)
     return;
 
   const auto PWINDOW = m_pWindow.lock();
@@ -677,8 +1096,11 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
   // The title is rendered at the monitor's scale. A window dragged between
   // monitors of different scales is drawn on each, so one texture is kept per
   // scale; otherwise the title shows at the other monitor's size.
-  if (m_szLastTitle != title || m_bWindowSizeChanged || m_bTitleColorChanged)
+  const float visibleButtonsW = visibleButtonsWidth(PWINDOW);
+  if (m_szLastTitle != title || m_bWindowSizeChanged || m_bTitleColorChanged || m_fCachedTitleButtonsWidth != visibleButtonsW) {
     m_titleTexByScale.clear();
+    m_fCachedTitleButtonsWidth = visibleButtonsW;
+  }
   if (ENABLETITLE) {
     m_szLastTitle = title;
     auto &tex = m_titleTexByScale[static_cast<int>(std::round(pMonitor->m_scale * 100))];
@@ -704,10 +1126,7 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
     const auto BARBUTTONPADDING = g_pOmarchyFloatingGlobalState->config.barButtonPadding->value();
     const auto ALIGN = g_pOmarchyFloatingGlobalState->config.barTextAlign->value();
 
-    float buttonSizes = BARBUTTONPADDING;
-    for (auto &b : g_pOmarchyFloatingGlobalState->buttons) {
-      buttonSizes += b.size + BARBUTTONPADDING;
-    }
+    const float buttonSizes = visibleButtonsWidth(PWINDOW);
 
     const auto scaledBorderSize = PWINDOW->presentation().borderSize() * pMonitor->m_scale;
     const auto scaledButtonsSize = buttonSizes * pMonitor->m_scale;
@@ -754,7 +1173,7 @@ void COmarchyFloatingHyprBar::onConfigReloaded() {
 
   // Bars start disabled, so the reload that enables them has to make room for
   // them, as a change in m_hidden does.
-  const auto ENABLED = g_pOmarchyFloatingGlobalState->config.enabled->value();
+  const auto ENABLED = isEffectivelyShown();
   if (m_bLastEnabledState != ENABLED) {
     m_bLastEnabledState = ENABLED;
     if (const auto PWINDOW = m_pWindow.lock(); PWINDOW)
@@ -775,7 +1194,7 @@ uint64_t COmarchyFloatingHyprBar::getDecorationFlags() {
   return DECORATION_ALLOWS_MOUSE_INPUT | (g_pOmarchyFloatingGlobalState->config.barPartOfWindow->value() ? DECORATION_PART_OF_MAIN_WINDOW : 0);
 }
 
-CBox COmarchyFloatingHyprBar::assignedBoxGlobal() {
+CBox COmarchyFloatingHyprBar::assignedBoxGlobal() const {
   if (!validMapped(m_pWindow))
     return {};
 
@@ -803,9 +1222,11 @@ void COmarchyFloatingHyprBar::updateRules() {
 
   if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pOmarchyFloatingGlobalState->nobarRuleIdx))
     m_hidden = truthy(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pOmarchyFloatingGlobalState->nobarRuleIdx)->effect);
+  // workspace_tag is an optional restriction across every layout; empty means
+  // every window in an enabled layout gets a bar.
   const auto workspaceTag = g_pOmarchyFloatingGlobalState->config.workspaceTag->value();
   if (!workspaceTag.empty())
-    m_hidden = m_hidden || !PWINDOW->isFloating() || !PWINDOW->m_ruleApplicator->m_tagKeeper.isTagged(workspaceTag);
+    m_hidden = m_hidden || !PWINDOW->m_ruleApplicator->m_tagKeeper.isTagged(workspaceTag);
   if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pOmarchyFloatingGlobalState->barColorRuleIdx))
     m_bForcedBarColor = CHyprColor(
         Config::ParserUtils::parseColor(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pOmarchyFloatingGlobalState->barColorRuleIdx)->effect).value_or(0));
@@ -835,7 +1256,7 @@ void COmarchyFloatingHyprBar::damageOnButtonHover() {
   const auto COORDS = cursorRelativeToBar();
 
   unsigned int hoverState = 0;
-  for (size_t i = 0; i < g_pOmarchyFloatingGlobalState->buttons.size(); ++i) {
+  for (const size_t i : fitVisibleButtonIndices(m_pWindow.lock(), assignedBoxGlobal().w - 2.f * BARPADDING)) {
     const auto &b = g_pOmarchyFloatingGlobalState->buttons[i];
     const auto BARBUF = Vector2D{(int)assignedBoxGlobal().w, HEIGHT};
     Vector2D currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - BARBUTTONPADDING - b.size - offset : offset), (BARBUF.y - b.size) / 2.0}.floor();

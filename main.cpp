@@ -15,10 +15,9 @@
 #include <hyprland/src/config/lua/bindings/LuaBindingsInternal.hpp>
 #include <hyprland/src/config/lua/types/LuaConfigColor.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
-
 #include <hyprutils/string/VarList.hpp>
 
-#include <algorithm>
+#include <array>
 
 #include "barDeco.hpp"
 #include "globals.hpp"
@@ -140,6 +139,14 @@ int newOmarchyFloatingLuaButton(lua_State *L) {
   return 0;
 }
 
+static void setLastInputTouch(bool touch) {
+  if (g_pOmarchyFloatingGlobalState->lastInputTouch == touch)
+    return;
+  g_pOmarchyFloatingGlobalState->lastInputTouch = touch;
+  for (auto &b : g_pOmarchyFloatingGlobalState->bars)
+    if (b)
+      b->refreshShownState();
+}
 static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   OMARCHY_FLOATING_PHANDLE = handle;
 
@@ -160,6 +167,17 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
 
   static auto P = Event::bus()->m_events.window.open.listen([&](PHLWINDOW w) { onNewWindow(w); });
   static auto P3 = Event::bus()->m_events.window.updateRules.listen([&](PHLWINDOW w) { onUpdateWindowRules(w); });
+  // Touch has no hover: a hover-mode bar falls back to active while a touch
+  // gesture is the last input, until the pointer is used again. Flipping the
+  // input kind changes what the bars draw, so refresh them on the flip.
+  static auto PTouchDown = Event::bus()->m_events.input.touch.down.listen(
+      [&](ITouch::SDownEvent, Event::SCallbackInfo&) { setLastInputTouch(true); });
+  static auto PTouchMotion = Event::bus()->m_events.input.touch.motion.listen(
+      [&](ITouch::SMotionEvent, Event::SCallbackInfo&) { setLastInputTouch(true); });
+  static auto PMouseMove = Event::bus()->m_events.input.mouse.move.listen(
+      [&](Vector2D, Event::SCallbackInfo&) { setLastInputTouch(false); });
+  static auto PMouseButton = Event::bus()->m_events.input.mouse.button.listen(
+      [&](IPointer::SButtonEvent, Event::SCallbackInfo&) { setLastInputTouch(false); });
 
   g_pOmarchyFloatingGlobalState->config.barColor = makeShared<Config::Values::CColorValue>("plugin:hyprbars:bar_color", "Change the bar color", 0x88333333);
   g_pOmarchyFloatingGlobalState->config.textColor = makeShared<Config::Values::CColorValue>("plugin:hyprbars:col.text", "Change the text color", 0xffffffff);
@@ -189,17 +207,35 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CIntValue>("plugin:hyprbars:bar_button_padding", "Padding of the bar buttons", 5);
   g_pOmarchyFloatingGlobalState->config.buttonRounding =
       makeShared<Config::Values::CIntValue>("plugin:hyprbars:button_rounding", "Button corner radius. -1 preserves the upstream circular style", -1);
+  g_pOmarchyFloatingGlobalState->config.showModeCursorProximity =
+      makeShared<Config::Values::CIntValue>("plugin:hyprbars:show_mode_cursor_proximity",
+          "In active/hover mode only show the bar while the pointer is within this many pixels of the window's top; 0 disables", 0);
   g_pOmarchyFloatingGlobalState->config.buttonBorderSize =
       makeShared<Config::Values::CIntValue>("plugin:hyprbars:button_border_size", "Width of the button border", 0);
   g_pOmarchyFloatingGlobalState->config.buttonBorderColor =
       makeShared<Config::Values::CColorValue>("plugin:hyprbars:button_border_color", "Color of the button border", 0x00000000);
-  g_pOmarchyFloatingGlobalState->config.enabled = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:enabled", "Whether bars are enabled", false);
+  g_pOmarchyFloatingGlobalState->config.enabled = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:enabled", "Bars on floating windows. Legacy option; prefer `floating_enabled`, which overrides this when set", false);
+  g_pOmarchyFloatingGlobalState->config.showMode =
+      makeShared<Config::Values::CStringValue>("plugin:hyprbars:show_mode",
+          "When to show bars: \"active\" (focused windows only) or \"hover\" (pointer over the window or its bar); unset shows them always", "");
   g_pOmarchyFloatingGlobalState->config.iconOnHover =
       makeShared<Config::Values::CBoolValue>("plugin:hyprbars:icon_on_hover", "Whether to use an icon on hover of the buttons", false);
   g_pOmarchyFloatingGlobalState->config.onDoubleClick =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:on_double_click", "Action to execute on double click of the bar", "");
   g_pOmarchyFloatingGlobalState->config.workspaceTag =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:workspace_tag", "Restrict bars to windows with this tag", "");
+  {
+    auto& opt = g_pOmarchyFloatingGlobalState->config.typeEnabled["floating"];
+    opt.path = "plugin:hyprbars:floating_enabled";
+    opt.desc = "Whether titlebars are drawn on floating windows. Overrides the legacy `enabled` option when set; unset falls back to it.";
+    opt.value = makeShared<Config::Values::CBoolValue>(opt.path.c_str(), opt.desc.c_str(), false);
+  }
+  {
+    auto& opt = g_pOmarchyFloatingGlobalState->config.typeEnabled["tiled"];
+    opt.path = "plugin:hyprbars:tiled_enabled";
+    opt.desc = "Whether titlebars are drawn on tiled windows. Independent of `enabled`; default off.";
+    opt.value = makeShared<Config::Values::CBoolValue>(opt.path.c_str(), opt.desc.c_str(), false);
+  }
 
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.textColor);
@@ -219,10 +255,15 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barButtonPadding);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonRounding);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderSize);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.showModeCursorProximity);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.enabled);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.showMode);
+  for (const auto& [name, opt] : g_pOmarchyFloatingGlobalState->config.typeEnabled)
+    HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, opt.value);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.workspaceTag);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.iconOnHover);
+
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.onDoubleClick);
 
   HyprlandAPI::addLuaFunction(OMARCHY_FLOATING_PHANDLE, "hyprbars", "add_button", ::newOmarchyFloatingLuaButton);
