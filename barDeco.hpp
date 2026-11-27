@@ -132,6 +132,10 @@ private:
   bool m_bTouchEv = false;
   bool m_bDragPending = false;
   bool m_bCancelledDown = false;
+  // Floating state captured at press time, before Hyprland's native drag
+  // temporarily floats a tiled window; the visibility decision uses it for
+  // the whole drag so the transient float can't hide the bar.
+  std::optional<bool> m_dragStartFloating;
   int m_touchId = 0;
   // Vertical grab point inside the titlebar (0 = bar top) captured at press;
   // used by the floating restore placement in handleMovement to keep the grab

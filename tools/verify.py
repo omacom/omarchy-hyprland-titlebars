@@ -439,6 +439,46 @@ end
     print('PASS: dragging a tiled titlebar (incl. quick flicks) uses the native drag (float, center, native drop re-tile; clicks never pick up)', flush=True)
     tile2.terminate()
     tile2.wait(timeout=5)
+    # Regression: with floating bars disabled, a tiled titlebar drag must keep
+    # its bar — Hyprland temporarily floats the window during the drag, and
+    # the visibility decision must use the window's starting type, not the
+    # transient float.
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { floating_enabled = false, tiled_enabled = true, show_mode = "", workspace_tag = "" } } })')
+    time.sleep(.3)
+    drag2 = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-drag2', 'sleep', '90'], env=env, stdout=log, stderr=log)
+    for _ in range(60):
+        if len(json.loads(ctl('clients', '-j'))) >= 2:
+            break
+        time.sleep(.1)
+    assert len(json.loads(ctl('clients', '-j'))) >= 2
+    for a in [second_address] + [w['address'] for w in json.loads(ctl('clients', '-j')) if w['address'] != second_address]:
+        ctl('dispatch', f'hl.dsp.window.float({{ action = "disable", window = "address:{a}" }})')
+    time.sleep(.4)
+    wins = {w['address']: w for w in json.loads(ctl('clients', '-j'))}
+    tiled = wins[second_address]
+    assert not tiled['floating'] and tiled['at'][1] >= 30, tiled
+    gx = tiled['at'][0] + tiled['size'][0] // 2
+    gy = tiled['at'][1] - 15
+    held = subprocess.Popen([str(scratch / 'pointer'), '1280', '800'], stdin=subprocess.PIPE, text=True, env=env)
+    def feed(cmds):
+        held.stdin.write('\n'.join(cmds) + '\n')
+        held.stdin.flush()
+    feed([f'move {gx} {gy}', 'wait 100', 'down', 'wait 300'])
+    feed([f'move {gx + 40} {gy + 20}', 'wait 500'])
+    time.sleep(1.0)
+    mid = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
+    assert mid['floating'], (tiled, mid)  # the transient float really happens
+    assert mid['at'][1] >= 30, mid  # ...but the bar stays reserved
+    feed(['wait 100', 'up'])
+    held.stdin.close()
+    held.wait(timeout=10)
+    time.sleep(.2)
+    after = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
+    assert not after['floating'] and after['at'][1] >= 30, (tiled, after)
+    capture('tiled-drag-floating-disabled')
+    print('PASS: tiled titlebar drag keeps its bar while floating bars are disabled', flush=True)
+    drag2.terminate()
+    drag2.wait(timeout=5)
     ctl('eval', 'hl.config({ plugin = { hyprbars = { tiled_enabled = false, enabled = true, workspace_tag = "" } } })')
     time.sleep(.3)
   finally:

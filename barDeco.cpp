@@ -124,11 +124,14 @@ eHyprBarMode COmarchyFloatingHyprBar::combinedMode() const {
   if (!PWINDOW)
     return eHyprBarMode::NEVER;
 
-  const bool floating = PWINDOW->isFloating();
+  // A native tiled titlebar drag temporarily floats the window. The bar must
+  // keep following the window's type at press time until the drag ends, so a
+  // floating-disabled + tiled-enabled config doesn't hide the bar mid-drag.
+  const bool dragging = m_bDragPending || m_bDraggingThis;
+  const bool floating = dragging && m_dragStartFloating.has_value() ? *m_dragStartFloating : PWINDOW->isFloating();
 
   // Per-window-type enablement. A window is either floating or tiled, so its
   // type selects exactly one of the two keys below.
-  //
   // `enabled` is the legacy option: historically it was the only switch and
   // meant "bars on floating windows". It is kept as the old spelling for
   // `floating_enabled`. Floating visibility therefore resolves to the newer
@@ -529,6 +532,7 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
 
     m_bDraggingThis = false;
     m_bDragPending = false;
+    m_dragStartFloating.reset();
     m_bTouchEv = false;
     return;
   }
@@ -549,10 +553,12 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
       std::chrono::duration_cast<std::chrono::milliseconds>(Time::steadyNow() - m_lastMouseDown).count() < 400 /* Arbitrary delay I found suitable */) {
     Config::Supplementary::executor()->spawn(windowCommand(ON_DOUBLE_CLICK, PWINDOW));
     m_bDragPending = false;
+    m_dragStartFloating.reset();
   } else {
     m_lastMouseDown = Time::steadyNow();
     m_bDragPending = true;
     m_grabOffsetY = COORDS.y;
+    m_dragStartFloating = PWINDOW->isFloating();
 }
 }
 bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords) {
@@ -581,6 +587,7 @@ bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHL
   m_bCancelledDown = true;
   m_bDraggingThis = true;
   m_bDragPending = false;
+  m_dragStartFloating.reset();
   return true;
 }
 
@@ -606,6 +613,7 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
   }
   restoreDragSettings();
   m_bDragPending = false;
+  m_dragStartFloating.reset();
   m_bTouchEv = false;
   m_touchId = 0;
 }
