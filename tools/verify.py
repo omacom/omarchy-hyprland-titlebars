@@ -88,6 +88,73 @@ end
   def capture(name):
     monitor = json.loads(ctl('monitors', '-j'))[0]['name']
     subprocess.run(['grim', '-o', monitor, str(args.artifacts / f'{name}.png')], env=env, check=True)
+  def png_rgb(path):
+    # Minimal PNG decode (bit depth 8, color types 0/2/6) using only stdlib.
+    import struct
+    import zlib
+    data = open(path, 'rb').read()
+    assert data[:8] == b'\x89PNG\r\n\x1a\n'
+    pos = 8
+    idat = b''
+    w = h = 0
+    bitdepth = colortype = 0
+    while pos < len(data):
+        ln = struct.unpack('>I', data[pos:pos + 4])[0]
+        typ = data[pos + 4:pos + 8]
+        chunk = data[pos + 8:pos + 8 + ln]
+        if typ == b'IHDR':
+            w, h, bitdepth, colortype = struct.unpack('>IIBB', chunk[:10])
+        elif typ == b'IDAT':
+            idat += chunk
+        elif typ == b'IEND':
+            break
+        pos += 12 + ln
+    assert bitdepth == 8 and colortype in (0, 2, 6)
+    channels = {0: 1, 2: 3, 6: 4}[colortype]
+    stride = w * channels
+    raw = zlib.decompress(idat)
+    out = bytearray(w * h * 3)
+    prev = bytearray(stride)
+    for y in range(h):
+        row = y * (stride + 1)
+        f = raw[row]
+        line = bytearray(raw[row + 1:row + 1 + stride])
+        if f == 1:
+            for i in range(channels, stride):
+                line[i] = (line[i] + line[i - channels]) & 255
+        elif f == 2:
+            for i in range(stride):
+                line[i] = (line[i] + prev[i]) & 255
+        elif f == 3:
+            for i in range(stride):
+                a = line[i - channels] if i >= channels else 0
+                line[i] = (line[i] + ((a + prev[i]) >> 1)) & 255
+        elif f == 4:
+            for i in range(stride):
+                a = line[i - channels] if i >= channels else 0
+                b = prev[i]
+                c = prev[i - channels] if i >= channels else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[i] = (line[i] + pr) & 255
+        for i in range(w):
+            base = i * channels
+            out[(y * w + i) * 3] = line[base]
+            out[(y * w + i) * 3 + 1] = line[base + 1]
+            out[(y * w + i) * 3 + 2] = line[base + 2]
+        prev = line
+    return w, h, out
+
+  def band_bright(name, x0, x1, y0, y1, thr=120):
+    w, h, px = png_rgb(str(args.artifacts / f'{name}.png'))
+    n = 0
+    for y in range(max(0, y0), min(h, y1)):
+        for x in range(max(0, x0), min(w, x1)):
+            i = (y * w + x) * 3
+            if px[i] > thr and px[i + 1] > thr and px[i + 2] > thr:
+                n += 1
+    return n
 
   try:
     for _ in range(80):
@@ -469,6 +536,15 @@ end
     mid = {w['address']: w for w in json.loads(ctl('clients', '-j'))}[second_address]
     assert mid['floating'], (tiled, mid)  # the transient float really happens
     assert mid['at'][1] >= 30, mid  # ...but the bar stays reserved
+    capture('tiled-drag-floating-disabled-mid')
+    bar_inside = band_bright('tiled-drag-floating-disabled-mid',
+                             mid['at'][0], mid['at'][0] + mid['size'][0],
+                             mid['at'][1] - 30, mid['at'][1])
+    bar_outside = band_bright('tiled-drag-floating-disabled-mid',
+                              mid['at'][0] + mid['size'][0] + 60,
+                              min(1280, mid['at'][0] + mid['size'][0] + 600),
+                              mid['at'][1] - 30, mid['at'][1])
+    assert bar_inside > 400 and bar_outside < 20, (mid, bar_inside, bar_outside)  # bar actually drawn mid-drag
     feed(['wait 100', 'up'])
     held.stdin.close()
     held.wait(timeout=10)
