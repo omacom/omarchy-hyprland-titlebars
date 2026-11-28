@@ -26,6 +26,16 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
 | `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
 
+## Following a window's own decorations
+
+The `hyprbars:no_bar` window rule hides the titlebar outright when true. Set to `"csd"`, it hides it only while the window draws its own decorations:
+
+```lua
+hl.window_rule({ match = { class = "google-chrome" }, ["hyprbars:no_bar"] = "csd" })
+```
+
+A window that asks the compositor for server-side decorations through xdg-decoration then gets a titlebar, and one that asks for client-side ones, or does not ask, gets none. A Chromium browser asks according to its "Use system title bar and borders" setting, so the titlebar follows that setting, live, and never doubles the browser's own frame.
+
 ## Titles
 
 A titlebar shows the name of the app the window belongs to, when a desktop entry claims the window's class through `StartupWMClass` or its file name, and the window's own title otherwise. A web app titles its window with its page or just its domain, so this is what keeps `web.whatsapp.com` reading WhatsApp. Entries are read from `$XDG_DATA_HOME/applications` and then `$XDG_DATA_DIRS`, so a user's own entry wins, and an entry added while Hyprland runs is picked up within a couple of seconds.
