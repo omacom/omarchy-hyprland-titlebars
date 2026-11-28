@@ -32,6 +32,9 @@ struct SOmarchyFloatingGlobalState {
   uint32_t nobarRuleIdx = 0;
   uint32_t barColorRuleIdx = 0;
   uint32_t titleColorRuleIdx = 0;
+  // The bar whose top-edge resize cursor is showing. The cursor override is
+  // global, so only the bar that set it clears it.
+  COmarchyFloatingHyprBar *topEdgeCursorOwner = nullptr;
 
   struct {
     SP<Config::Values::CColorValue> barColor, textColor, inactiveBarColor, inactiveButtonColor, buttonBorderColor;

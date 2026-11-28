@@ -174,6 +174,27 @@ end
     assert after['at'][1] + after['size'][1] == before['at'][1] + before['size'][1], (before, after)
     capture('top-edge-resized')
     print('PASS: dragging just above the titlebar resizes the window from its top edge', flush=True)
+
+    # The band reaches a few pixels into the titlebar too, so the edge is not
+    # a sliver as thin as the border and grab area above it.
+    edge_before = client()
+    y = edge_before['at'][1] - 30 + 1
+    commands = [f'move {x} {y}', 'wait 100', 'down', 'wait 120']
+    for i in range(1, 11):
+      commands += [f'move {x} {y - 6 * i}', 'wait 20']
+    commands += ['wait 100', 'up']
+    pointer(commands)
+    edge_after = client()
+    assert edge_after['size'][1] >= edge_before['size'][1] + 40, (edge_before, edge_after)
+    assert edge_after['at'][1] + edge_after['size'][1] == edge_before['at'][1] + edge_before['size'][1], (edge_before, edge_after)
+    print("PASS: dragging the titlebar's top edge resizes the window", flush=True)
+
+    # Hyprland never points out the band, so the titlebar shows the resize
+    # cursor over it. Left with the cursor for review: grim cannot say which
+    # shape is showing.
+    pointer([f'move {x} {edge_after["at"][1] - 30 - 4}', 'wait 200'])
+    monitor = json.loads(ctl('monitors', '-j'))[0]['name']
+    subprocess.run(['grim', '-c', '-o', monitor, str(args.artifacts / 'top-edge-cursor.png')], env=env, check=True)
     ctl('eval', 'hl.config({ plugin = { hyprbars = { bar_precedence_over_border = false } } })')
     ctl('dispatch', f'hl.dsp.window.resize({{ x = {before["size"][0]}, y = {before["size"][1]} }})')
     ctl('dispatch', 'hl.dsp.window.center()')
