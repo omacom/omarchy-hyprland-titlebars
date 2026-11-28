@@ -27,6 +27,7 @@
 #include "globals.hpp"
 #include "BarPassElement.hpp"
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
+#include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
 #include "appName.hpp"
 
 #include <algorithm>
@@ -70,7 +71,10 @@ COmarchyFloatingHyprBar::COmarchyFloatingHyprBar(PHLWINDOW pWindow) : IHyprWindo
   m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
 }
 
-COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() { std::erase(g_pOmarchyFloatingGlobalState->bars, m_self); }
+COmarchyFloatingHyprBar::~COmarchyFloatingHyprBar() {
+  clearTopEdgeCursor();
+  std::erase(g_pOmarchyFloatingGlobalState->bars, m_self);
+}
 
 SDecorationPositioningInfo COmarchyFloatingHyprBar::getPositioningInfo() {
   const auto HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
@@ -175,6 +179,7 @@ void COmarchyFloatingHyprBar::onMouseMove(Vector2D coords) {
   // Hovered buttons are highlighted, so redraw when the pointer moves between
   // them, also with hardware cursors.
   damageOnButtonHover();
+  updateTopEdgeCursor();
 
   if (!m_bDragPending || m_bTouchEv || !validMapped(m_pWindow) || m_touchId != 0)
     return;
@@ -229,7 +234,7 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
 
   // Hyprland measures its border resize band from the window's content, so for
   // a titled window the band sits under the bar and the edge above the bar
-  // never resizes. A press in the band above the bar starts that resize here.
+  // never resizes. A press in the band at the bar's top starts that resize here.
   if (!m_bTouchEv && startTopEdgeResize(info, PWINDOW, COORDS))
     return;
 
@@ -270,18 +275,72 @@ void COmarchyFloatingHyprBar::handleDownEvent(Event::SCallbackInfo &info, std::o
   }
 }
 
-bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords) {
+// The band that resizes the window from the top, with the cursor shape that
+// says so, or nothing outside it. It runs from a few pixels into the bar out
+// over the border and the grab area beyond it, across the bar's width and the
+// grab area at its corners. The part above the bar alone is as thin as the
+// border and grab area, which is hard to find with nothing pointing it out.
+std::string COmarchyFloatingHyprBar::topEdgeShapeAt(PHLWINDOW window, const Vector2D &coords) {
   static const auto RESIZEONBORDER = CConfigValue<Config::INTEGER>("general:resize_on_border");
   static const auto EXTENDGRAB = CConfigValue<Config::INTEGER>("general:extend_border_grab_area");
+  constexpr double INSET = 4;
 
-  if (!*RESIZEONBORDER || !window || !window->isFloating() || Fullscreen::controller()->isFullscreen(window))
-    return false;
+  if (m_hidden || !*RESIZEONBORDER || !window || !window->isFloating() || Fullscreen::controller()->isFullscreen(window))
+    return {};
 
-  // The band runs from the top of the bar out over the border and the grab
-  // area beyond it, across the bar's width and the grab area at its corners.
   const double GRAB = window->presentation().borderSize() + *EXTENDGRAB;
   const double WIDTH = assignedBoxGlobal().w;
-  if (coords.y >= 0 || coords.y < -GRAB || coords.x < -GRAB || coords.x >= WIDTH + GRAB)
+  const double DEPTH = std::min(INSET, g_pOmarchyFloatingGlobalState->config.barHeight->value() / 4.0);
+  if (coords.y >= DEPTH || coords.y < -GRAB || coords.x < -GRAB || coords.x >= WIDTH + GRAB)
+    return {};
+
+  if (coords.x < 0)
+    return "top_left_corner";
+  if (coords.x >= WIDTH)
+    return "top_right_corner";
+  return "top_side";
+}
+
+// Hyprland points out the border it resizes from, but it measures that border
+// from the window's content, under the bar, so it never shows over the band
+// this bar resizes from. Show it there instead.
+void COmarchyFloatingHyprBar::updateTopEdgeCursor() {
+  if (m_bDraggingThis)
+    return;
+
+  const auto window = m_pWindow.lock();
+  auto shape = topEdgeShapeAt(window, cursorRelativeToBar());
+  if (!shape.empty() && (!g_pOmarchyFloatingGlobalState->config.enabled->value() || !inputIsValid()))
+    shape.clear();
+
+  if (shape.empty()) {
+    clearTopEdgeCursor();
+    return;
+  }
+
+  auto &owner = g_pOmarchyFloatingGlobalState->topEdgeCursorOwner;
+  if (owner == this && shape == m_topEdgeShape)
+    return;
+  if (owner && owner != this)
+    owner->m_topEdgeShape.clear();
+
+  owner = this;
+  m_topEdgeShape = shape;
+  Pointer::Cursor::overrideController->setOverride(shape, Pointer::Cursor::CURSOR_OVERRIDE_UNKNOWN);
+}
+
+void COmarchyFloatingHyprBar::clearTopEdgeCursor() {
+  auto &owner = g_pOmarchyFloatingGlobalState->topEdgeCursorOwner;
+  if (owner != this)
+    return;
+
+  owner = nullptr;
+  m_topEdgeShape.clear();
+  Pointer::Cursor::overrideController->unsetOverride(Pointer::Cursor::CURSOR_OVERRIDE_UNKNOWN);
+}
+
+bool COmarchyFloatingHyprBar::startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords) {
+  if (topEdgeShapeAt(window, coords).empty())
     return false;
 
   if (Desktop::focusState()->window() != window)

@@ -22,6 +22,7 @@
 
 #include "barDeco.hpp"
 #include "globals.hpp"
+#include <hyprland/src/pointer/cursor/CursorShapeOverrideController.hpp>
 
 extern "C" {
 #include <lua.h>
@@ -243,6 +244,11 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
 }
 
 static void exitOmarchyFloating() {
+  if (g_pOmarchyFloatingGlobalState->topEdgeCursorOwner) {
+    g_pOmarchyFloatingGlobalState->topEdgeCursorOwner = nullptr;
+    Pointer::Cursor::overrideController->unsetOverride(Pointer::Cursor::CURSOR_OVERRIDE_UNKNOWN);
+  }
+
   for (auto &m : State::monitorState()->monitors())
     m->m_scheduledRecalc = true;
 

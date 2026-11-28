@@ -30,6 +30,10 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 
 A titlebar shows the name of the app the window belongs to, when a desktop entry claims the window's class through `StartupWMClass` or its file name, and the window's own title otherwise. A web app titles its window with its page or just its domain, so this is what keeps `web.whatsapp.com` reading WhatsApp. Entries are read from `$XDG_DATA_HOME/applications` and then `$XDG_DATA_DIRS`, so a user's own entry wins, and an entry added while Hyprland runs is picked up within a couple of seconds.
 
+## Resizing from the top
+
+A titlebar sits over the window's top border, and Hyprland measures the band it resizes from out of the window's content, so that band lands under the titlebar, where a press drags the window instead. With `general:resize_on_border` on, the titlebar takes over the top edge itself: a press in the band from the titlebar's top 4 pixels out over the border and `general:extend_border_grab_area` resizes the window from its top, or from a top corner past either end. Hyprland doesn't point that band out either, so the titlebar shows the resize cursor over it.
+
 ## Button hover
 
 A button under the pointer is highlighted in its own icon color at low opacity, so the effect follows any theme without a setting of its own.
