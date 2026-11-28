@@ -97,7 +97,10 @@ private:
 
   void handleDownEvent(Event::SCallbackInfo &info, std::optional<ITouch::SDownEvent> touchEvent);
   void handleUpEvent(Event::SCallbackInfo &info);
+  std::string topEdgeShapeAt(PHLWINDOW window, const Vector2D &coords);
   bool startTopEdgeResize(Event::SCallbackInfo &info, PHLWINDOW window, const Vector2D &coords);
+  void updateTopEdgeCursor();
+  void clearTopEdgeCursor();
   void handleMovement();
   void keepTitlebarReachable();
   bool doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, bool BUTTONSRIGHT);
@@ -112,6 +115,7 @@ private:
   CHyprSignalListener m_pMouseMoveCallback;
 
   std::string m_szLastTitle;
+  std::string m_topEdgeShape;
 
   bool m_bDraggingThis = false;
   bool m_bTouchEv = false;
