@@ -514,11 +514,36 @@ SP<Render::ITexture> COmarchyFloatingHyprBar::iconTexture(const float scale) {
   if (!fresh && (!slot->second || slot->second->m_texID != 0))
     return slot->second;
 
-  // An SVG is drawn at the size it will show; any other image is scaled to it.
+  // An SVG is drawn at the size it will show. Any other image loads at its own
+  // size, often 256px, and the GPU shrinking that tenfold samples it without
+  // filtering into jagged edges, so cairo scales it down first.
   const double PX = std::round(iconSize() * scale);
   Hyprgraphics::CImage image(m_szIcon, Vector2D{PX, PX});
-  if (image.success() && image.cairoSurface())
-    slot->second = g_pHyprRenderer->createTexture(image.cairoSurface()->cairo());
+  if (!image.success() || !image.cairoSurface())
+    return slot->second;
+
+  const auto SOURCE = image.cairoSurface()->cairo();
+  const int  WIDTH  = cairo_image_surface_get_width(SOURCE);
+  const int  HEIGHT = cairo_image_surface_get_height(SOURCE);
+  if ((WIDTH == PX && HEIGHT == PX) || WIDTH <= 0 || HEIGHT <= 0) {
+    slot->second = g_pHyprRenderer->createTexture(SOURCE);
+    return slot->second;
+  }
+
+  const auto SCALED = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, PX, PX);
+  const auto CAIRO  = cairo_create(SCALED);
+  // A non-square image keeps its proportions, centered in the square.
+  const double FIT = std::min(PX / WIDTH, PX / HEIGHT);
+  cairo_translate(CAIRO, (PX - WIDTH * FIT) / 2.0, (PX - HEIGHT * FIT) / 2.0);
+  cairo_scale(CAIRO, FIT, FIT);
+  cairo_set_source_surface(CAIRO, SOURCE, 0, 0);
+  cairo_pattern_set_filter(cairo_get_source(CAIRO), CAIRO_FILTER_GOOD);
+  cairo_paint(CAIRO);
+  cairo_destroy(CAIRO);
+  cairo_surface_flush(SCALED);
+
+  slot->second = g_pHyprRenderer->createTexture(SCALED);
+  cairo_surface_destroy(SCALED);
   return slot->second;
 }
 
