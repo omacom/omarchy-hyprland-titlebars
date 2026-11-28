@@ -290,7 +290,12 @@ std::string COmarchyFloatingHyprBar::topEdgeShapeAt(PHLWINDOW window, const Vect
 
   const double GRAB = window->presentation().borderSize() + *EXTENDGRAB;
   const double WIDTH = assignedBoxGlobal().w;
-  const double DEPTH = std::min(INSET, g_pOmarchyFloatingGlobalState->config.barHeight->value() / 4.0);
+  // The band stops short of the buttons, which sit centered in the bar: a
+  // press on the top of a tall one is still a press on the button.
+  const double HEIGHT = g_pOmarchyFloatingGlobalState->config.barHeight->value();
+  double       DEPTH  = std::min(INSET, HEIGHT / 4.0);
+  for (const auto &button : g_pOmarchyFloatingGlobalState->buttons)
+    DEPTH = std::clamp((HEIGHT - button.size) / 2.0, 0.0, DEPTH);
   if (coords.y >= DEPTH || coords.y < -GRAB || coords.x < -GRAB || coords.x >= WIDTH + GRAB)
     return {};
 
