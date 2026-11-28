@@ -28,6 +28,7 @@
 #include "BarPassElement.hpp"
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include "appName.hpp"
+#include "decorationMode.hpp"
 
 #include <algorithm>
 #include <climits>
@@ -563,6 +564,13 @@ void COmarchyFloatingHyprBar::draw(Render::CRenderContext &ctx, PHLMONITOR pMoni
     g_pDecorationPositioner->repositionDeco(this);
   }
 
+  // A window changes its mind about decorations without telling the rules,
+  // as a browser does when its title bar setting is flipped.
+  if (m_bFollowsDecorationMode && validMapped(m_pWindow) && omarchyWantsServerDecorations(m_pWindow.lock()) != m_bWantsServerDecorations) {
+    updateRules();
+    damageEntire();
+  }
+
   if (m_hidden || !validMapped(m_pWindow) || !ENABLED)
     return;
 
@@ -801,8 +809,15 @@ void COmarchyFloatingHyprBar::updateRules() {
   m_bForcedTitleColor = std::nullopt;
   m_hidden = false;
 
-  if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pOmarchyFloatingGlobalState->nobarRuleIdx))
-    m_hidden = truthy(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pOmarchyFloatingGlobalState->nobarRuleIdx)->effect);
+  // no_bar hides the bar outright, or with "csd" only while the window draws
+  // its own decorations, so one that asks to be decorated gets a bar.
+  m_bFollowsDecorationMode = false;
+  if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pOmarchyFloatingGlobalState->nobarRuleIdx)) {
+    const auto &NOBAR = PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pOmarchyFloatingGlobalState->nobarRuleIdx)->effect;
+    m_bFollowsDecorationMode = NOBAR == "csd";
+    m_bWantsServerDecorations = m_bFollowsDecorationMode && omarchyWantsServerDecorations(PWINDOW);
+    m_hidden = m_bFollowsDecorationMode ? !m_bWantsServerDecorations : truthy(NOBAR);
+  }
   const auto workspaceTag = g_pOmarchyFloatingGlobalState->config.workspaceTag->value();
   if (!workspaceTag.empty())
     m_hidden = m_hidden || !PWINDOW->isFloating() || !PWINDOW->m_ruleApplicator->m_tagKeeper.isTagged(workspaceTag);

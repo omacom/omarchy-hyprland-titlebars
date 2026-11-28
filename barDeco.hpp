@@ -67,6 +67,9 @@ private:
 
   bool m_bWindowSizeChanged = false;
   bool m_hidden = false;
+  // The no_bar rule is "csd": no bar while the window decorates itself.
+  bool m_bFollowsDecorationMode = false;
+  bool m_bWantsServerDecorations = false;
   bool m_bTitleColorChanged = false;
   bool m_bLastEnabledState = false;
   bool m_bWindowHasFocus = false;

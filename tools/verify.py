@@ -28,6 +28,7 @@ with tempfile.TemporaryDirectory(prefix='oht-') as scratch:
     subprocess.run(['wayland-scanner', kind, str(source / 'wlr-virtual-pointer-unstable-v1.xml'), str(scratch / target)], check=True)
   subprocess.run(['cc', str(source / 'pointer.c'), str(scratch / 'pointer-protocol.c'), '-I', str(scratch), '-lwayland-client', '-o', str(scratch / 'pointer')], check=True)
   unconfigured = scratch / 'unconfigured'
+  follows = scratch / 'follows'
   config = scratch / 'hyprland.lua'
   config.write_text('''
 hl.monitor({ output = "", mode = "1280x800@60", position = "0x0", scale = 1 })
@@ -41,9 +42,14 @@ if hl.plugin and hl.plugin.hyprbars and not unconfigured then
     button_rounding = 4, bar_text_align = "left", bar_text_font = "Sans", bar_text_size = 12, bar_part_of_window = true,
     on_double_click = [[hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle", window = "address:%WINDOW%" })']],
   } } })
+  local follows = io.open("FOLLOWS", "r")
+  if follows then
+    follows:close()
+    hl.window_rule({ name = "test-csd", match = { class = ".*" }, ["hyprbars:no_bar"] = "csd" })
+  end
   hl.plugin.hyprbars.add_button({ bg_color = "rgb(f7768e)", fg_color = "rgb(1a1b26)", size = 18, icon = "×", action = [[hyprctl dispatch 'hl.dsp.window.close({ window = "address:%WINDOW%" })']] })
 end
-'''.replace('UNCONFIGURED', str(unconfigured)))
+'''.replace('UNCONFIGURED', str(unconfigured)).replace('FOLLOWS', str(follows)))
   parent_instances = json.loads(subprocess.check_output(['hyprctl', 'instances', '-j'], text=True))
   if len(parent_instances) != 1:
     raise RuntimeError('Verification expects exactly one parent compositor')
@@ -153,6 +159,39 @@ end
     time.sleep(.25)
     assert not ctl('configerrors').strip(), ctl('configerrors')
     capture('floating')
+
+    # no_bar = "csd" keeps the bar from a window that decorates itself and
+    # leaves it on one that asks the compositor to. A maximized window starts
+    # under its bar, or at the top without one.
+    def top_when_maximized(address):
+      ctl('dispatch', f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "set", window = "address:{address}" }})')
+      time.sleep(.3)
+      top = next(w for w in json.loads(ctl('clients', '-j')) if w['address'] == address)['at'][1]
+      ctl('dispatch', f'hl.dsp.window.fullscreen({{ mode = "maximized", action = "unset", window = "address:{address}" }})')
+      time.sleep(.2)
+      return top
+
+    follows.touch()
+    ctl('reload')
+    time.sleep(.3)
+    asking = client()['address']
+    assert top_when_maximized(asking) > 12, 'a window asking for server-side decorations lost its bar'
+    own = subprocess.Popen(['foot', '--app-id=omarchy-titlebars-own-frame', '-o', 'csd.preferred=client', 'sleep', '30'], env=env, stdout=log, stderr=log)
+    for _ in range(60):
+      framed = [w for w in json.loads(ctl('clients', '-j')) if w['class'] == 'omarchy-titlebars-own-frame']
+      if framed:
+        break
+      time.sleep(.1)
+    else:
+      raise RuntimeError('Self-decorated client did not map')
+    time.sleep(.3)
+    assert top_when_maximized(framed[0]['address']) <= 12, 'a window drawing its own decorations got a bar'
+    own.terminate()
+    own.wait(timeout=5)
+    follows.unlink()
+    ctl('reload')
+    time.sleep(.3)
+    print('PASS: no_bar = "csd" follows the decorations a window asks for', flush=True)
 
     # Omarchy draws the border around the titlebar too. Hyprland measures its
     # resize band from the window's content, which puts the top of that band
