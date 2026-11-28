@@ -64,6 +64,11 @@ private:
   SP<Render::ITexture> m_pTextTex;
   // Title textures keyed by monitor scale x100; see renderPass().
   std::map<int, SP<Render::ITexture>> m_titleTexByScale;
+  // The app's icon, drawn before the title: its file, and a texture per
+  // monitor scale as for the title. A file that would not load keeps an empty
+  // texture, so it is tried once.
+  std::string m_szIcon;
+  std::map<int, SP<Render::ITexture>> m_iconTexByScale;
 
   bool m_bWindowSizeChanged = false;
   bool m_hidden = false;
@@ -84,6 +89,9 @@ private:
 
   void renderPass(Render::CRenderContext &ctx, PHLMONITOR, float const &a);
   void renderBarTitle(const Vector2D &bufferSize, const float scale);
+  SP<Render::ITexture> iconTexture(const float scale);
+  float iconSize();
+  float iconSpace();
   void renderBarButtons(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
   void renderBarButtonsText(Render::CRenderContext &ctx, CBox *barBox, const float scale, const float a);
   void damageOnButtonHover();

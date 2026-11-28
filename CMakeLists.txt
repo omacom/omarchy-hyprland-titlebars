@@ -22,6 +22,7 @@ target_compile_options(titlebars PRIVATE -fno-gnu-unique)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(deps REQUIRED IMPORTED_TARGET
   hyprland
+  hyprgraphics
   libdrm
   libinput
   libudev
