@@ -207,8 +207,6 @@ std::string omarchyAppIcon(const std::string& windowClass) {
   // A window no entry claims may still have an icon named after its class.
   if (file.empty())
     file = iconFile(windowClass);
-  if (file.empty())
-    file = iconFile(lower(windowClass));
 
   g_resolvedIcons[windowClass] = file;
   return file;

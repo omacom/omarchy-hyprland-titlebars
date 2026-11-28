@@ -64,9 +64,10 @@ private:
   SP<Render::ITexture> m_pTextTex;
   // Title textures keyed by monitor scale x100; see renderPass().
   std::map<int, SP<Render::ITexture>> m_titleTexByScale;
-  // The app's icon, drawn before the title: its file, a texture per monitor
-  // scale as for the title, and a file that would not load, so it is tried once.
-  std::string m_szIcon, m_szBrokenIcon;
+  // The app's icon, drawn before the title: its file, and a texture per
+  // monitor scale as for the title. A file that would not load keeps an empty
+  // texture, so it is tried once.
+  std::string m_szIcon;
   std::map<int, SP<Render::ITexture>> m_iconTexByScale;
 
   bool m_bWindowSizeChanged = false;

@@ -444,23 +444,17 @@ SP<Render::ITexture> COmarchyFloatingHyprBar::iconTexture(const float scale) {
   if (m_szIcon.empty())
     return nullptr;
 
-  auto &tex = m_iconTexByScale[static_cast<int>(std::round(scale * 100))];
-  if (tex && tex->m_texID != 0)
-    return tex;
+  const auto [slot, fresh] = m_iconTexByScale.try_emplace(static_cast<int>(std::round(scale * 100)));
+  // One that failed is left empty; one lost with its context is drawn again.
+  if (!fresh && (!slot->second || slot->second->m_texID != 0))
+    return slot->second;
 
   // An SVG is drawn at the size it will show; any other image is scaled to it.
   const double PX = std::round(iconSize() * scale);
   Hyprgraphics::CImage image(m_szIcon, Vector2D{PX, PX});
   if (image.success() && image.cairoSurface())
-    tex = g_pHyprRenderer->createTexture(image.cairoSurface()->cairo());
-
-  if (!tex || tex->m_texID == 0) {
-    m_szBrokenIcon = m_szIcon;
-    m_szIcon.clear();
-    m_iconTexByScale.clear();
-    return nullptr;
-  }
-  return tex;
+    slot->second = g_pHyprRenderer->createTexture(image.cairoSurface()->cairo());
+  return slot->second;
 }
 
 size_t COmarchyFloatingHyprBar::getVisibleButtonCount(Config::INTEGER barButtonPadding, Config::INTEGER barPadding, const Vector2D &bufferSize,
@@ -716,9 +710,7 @@ void COmarchyFloatingHyprBar::renderPass(Render::CRenderContext &ctx, PHLMONITOR
   // monitors of different scales is drawn on each, so one texture is kept per
   // scale; otherwise the title shows at the other monitor's size.
   // The icon takes room from the title, so one coming or going redraws it.
-  std::string icon = g_pOmarchyFloatingGlobalState->config.barAppIcon->value() ? omarchyAppIcon(PWINDOW->metadata().appID()) : "";
-  if (icon == m_szBrokenIcon)
-    icon.clear();
+  const std::string icon = g_pOmarchyFloatingGlobalState->config.barAppIcon->value() ? omarchyAppIcon(PWINDOW->metadata().appID()) : "";
   const bool ICONCHANGED = icon != m_szIcon;
   if (ICONCHANGED) {
     m_szIcon = icon;
@@ -808,6 +800,7 @@ void COmarchyFloatingHyprBar::onConfigReloaded() {
   m_bTitleColorChanged = true;
   m_pTextTex = nullptr;
   m_titleTexByScale.clear();
+  m_iconTexByScale.clear();
 
   g_pDecorationPositioner->repositionDeco(this);
 
