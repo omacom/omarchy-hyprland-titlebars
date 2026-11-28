@@ -28,6 +28,14 @@ with tempfile.TemporaryDirectory(prefix='oht-') as scratch:
     subprocess.run(['wayland-scanner', kind, str(source / 'wlr-virtual-pointer-unstable-v1.xml'), str(scratch / target)], check=True)
   subprocess.run(['cc', str(source / 'pointer.c'), str(scratch / 'pointer-protocol.c'), '-I', str(scratch), '-lwayland-client', '-o', str(scratch / 'pointer')], check=True)
   unconfigured = scratch / 'unconfigured'
+  # A desktop entry of the test window's own, with an icon in one flat color
+  # that a capture can be probed for.
+  icons = scratch / 'icons'
+  data = scratch / 'data'
+  (data / 'applications').mkdir(parents=True)
+  (scratch / 'icon.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#ff00ff"/></svg>')
+  (data / 'applications' / 'omarchy-titlebars-isolated-test.desktop').write_text(
+    f'[Desktop Entry]\nType=Application\nName=Titlebars — isolated verification\nExec=true\nIcon={scratch / "icon.svg"}\n')
   config = scratch / 'hyprland.lua'
   config.write_text('''
 hl.monitor({ output = "", mode = "1280x800@60", position = "0x0", scale = 1 })
@@ -35,21 +43,23 @@ hl.config({ general = { gaps_in = 8, gaps_out = 8, border_size = 2, resize_on_bo
 hl.window_rule({ name = "test-float", match = { class = ".*" }, float = true, size = { 600, 400 }, center = true })
 local unconfigured = io.open("UNCONFIGURED", "r")
 if unconfigured then unconfigured:close() end
+local icons = io.open("ICONS", "r")
+if icons then icons:close() end
 if hl.plugin and hl.plugin.hyprbars and not unconfigured then
   hl.config({ plugin = { hyprbars = {
-    enabled = true, bar_height = 30, bar_color = "rgb(24283b)", bar_color_inactive = "rgb(1a1b26)", col = { text = "rgb(c0caf5)" },
+    enabled = true, bar_app_icon = icons ~= nil, bar_height = 30, bar_color = "rgb(24283b)", bar_color_inactive = "rgb(1a1b26)", col = { text = "rgb(c0caf5)" },
     button_rounding = 4, bar_text_align = "left", bar_text_font = "Sans", bar_text_size = 12, bar_part_of_window = true,
     on_double_click = [[hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle", window = "address:%WINDOW%" })']],
   } } })
   hl.plugin.hyprbars.add_button({ bg_color = "rgb(f7768e)", fg_color = "rgb(1a1b26)", size = 18, icon = "×", action = [[hyprctl dispatch 'hl.dsp.window.close({ window = "address:%WINDOW%" })']] })
 end
-'''.replace('UNCONFIGURED', str(unconfigured)))
+'''.replace('UNCONFIGURED', str(unconfigured)).replace('ICONS', str(icons)))
   parent_instances = json.loads(subprocess.check_output(['hyprctl', 'instances', '-j'], text=True))
   if len(parent_instances) != 1:
     raise RuntimeError('Verification expects exactly one parent compositor')
   parent_signature = parent_instances[0]['instance']
   parent_display = str(Path(os.environ['XDG_RUNTIME_DIR']) / parent_instances[0]['wl_socket'])
-  env = dict(os.environ, XDG_RUNTIME_DIR=str(scratch), AQ_BACKEND='wayland', WAYLAND_DISPLAY=parent_display, HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_SD_VARS='1')
+  env = dict(os.environ, XDG_RUNTIME_DIR=str(scratch), AQ_BACKEND='wayland', WAYLAND_DISPLAY=parent_display, HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_SD_VARS='1', XDG_DATA_HOME=str(data))
   env.pop('HYPRLAND_INSTANCE_SIGNATURE', None)
   log = (args.artifacts / 'compositor.log').open('w')
   compositor = subprocess.Popen(['Hyprland', '--config', str(config)], env=env, stdout=log, stderr=log)
@@ -84,6 +94,12 @@ end
     commands += ['wait 100', 'up']
     pointer(commands)
     return client()
+
+  # The color of one pixel of the nested screen.
+  def pixel(x, y):
+    probe = scratch / 'probe.ppm'
+    subprocess.run(['grim', '-t', 'ppm', '-g', f'{x},{y} 1x1', str(probe)], env=env, check=True)
+    return tuple(probe.read_bytes()[-3:])
 
   def capture(name):
     monitor = json.loads(ctl('monitors', '-j'))[0]['name']
@@ -153,6 +169,22 @@ end
     time.sleep(.25)
     assert not ctl('configerrors').strip(), ctl('configerrors')
     capture('floating')
+
+    # The app's icon is drawn before the title only when asked for. The bar
+    # pads its content 7 pixels, and the icon is 18 in a 30 pixel bar.
+    window = client()
+    spot = (window['at'][0] + 7 + 9, window['at'][1] - 15)
+    assert pixel(*spot) != (255, 0, 255), pixel(*spot)
+    icons.touch()
+    ctl('reload')
+    time.sleep(.3)
+    assert pixel(*spot) == (255, 0, 255), pixel(*spot)
+    capture('app-icon')
+    icons.unlink()
+    ctl('reload')
+    time.sleep(.3)
+    assert pixel(*spot) != (255, 0, 255), pixel(*spot)
+    print("PASS: the app's icon is drawn before the title when asked for", flush=True)
 
     # Omarchy draws the border around the titlebar too. Hyprland measures its
     # resize band from the window's content, which puts the top of that band

@@ -414,7 +414,7 @@ void COmarchyFloatingHyprBar::renderBarTitle(const Vector2D &bufferSize, const f
   const int scaledSize = std::round(SIZE * scale);
   const auto scaledButtonsSize = buttonSizes * scale;
   const auto scaledBarPadding = BARPADDING * scale;
-  const int paddingTotal = scaledBarPadding * 2 + scaledButtonsSize + (ALIGN != "left" ? scaledButtonsSize : 0) + std::round(iconSpace() * scale);
+  const int paddingTotal = scaledBarPadding * 2 + scaledButtonsSize + (ALIGN != "left" ? scaledButtonsSize : 0) + (iconTexture(scale) ? std::round(iconSpace() * scale) : 0);
   const int maxWidth = std::clamp(static_cast<int>(bufferSize.x - paddingTotal), 0, INT_MAX);
 
   if (m_szLastTitle.empty() || maxWidth < 1) {
